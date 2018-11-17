@@ -41,9 +41,8 @@ simparm <- list(N=N, p=p, BETA=BETA, nsim=nsim, k=k, myseed=myseed,
                 mycores=mycores, A=A, FDR=FDR)
 for (rj in seq_along(SigmaGenList)){
   SigmaGen <- SigmaGenList[[rj]]
-  # onesimrun(SigmaGen, BETA, N, FDR)
   res <- mclapply(1:nsim, function(i) return(onesimrun(SigmaGen, BETA, N, FDR)))
   save(simparm, res, SigmaGen,
-       file = paste("sim-opt-G-exch-rho", rhotest[rj],
+       file = paste("sim-opt-G-ar1-rho", rhotest[rj],
                     "-N", N, "-p", p, '-nsim', nsim, '.RData', sep=''))
 }
