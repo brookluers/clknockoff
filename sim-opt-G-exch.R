@@ -29,7 +29,7 @@ BETA[kcols] <- sample(c(A, -A), size = k, replace = TRUE)
 fdp <- function(selected) sum(BETA[selected] == 0) / max(1, length(selected))
 tpr <- function(selected) sum(BETA[selected] != 0) / max(1, length(selected))
 
-xrhotest <- seq(0.1,0.9,length.out = 8)
+rhotest <- seq(0.1,0.9,length.out = 8)
 SigmaGenList <- lapply(rhotest, function(rho) {
   SigmaGen <- matrix(0, nrow=p, ncol=p)
   SigmaGen[lower.tri(SigmaGen, diag = F)] <- rho
