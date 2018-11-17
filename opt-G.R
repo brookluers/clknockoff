@@ -29,13 +29,18 @@ get_detgrad <- function(Sigma){
 }
 
 get_ldetfun <- function(Sigma) {
+  # det(G) = det(S) * det(2Sigma - S)
+  #log(det(G)) = sum(log(eigenvalues of S)) + sum(log(eigenvalues of 2Sigma - S))
   f <- function(svec) {
-    Wdet <- determinant(2 * Sigma - diag(svec), logarithm = T)
-    if (Wdet$sign < 0) {
+    # Wdet <- determinant(2 * Sigma - diag(svec), logarithm = T)
+    W <- 2 * Sigma - diag(svec)
+    Wev <- eigen(W, symmetric = T, only.values = T)$values
+    if (any(Wev < 0)) {
       return(-Inf)
     } else{
       return(
-        sum(log(svec)) + Wdet$modulus[1]
+        # sum(log(svec)) + Wdet$modulus[1]
+        sum(log(svec)) + sum(log(Wev))
       )
     }
     
@@ -110,7 +115,7 @@ onesimrun <- function(SigmaGen, BETA, N, FDR){
                      c('equi', 'sdp', 'Gdet'))
   Xtlist <- lapply(Slist, function(SS) return(get_knockoffs(SS, Sigma_inv, X, Xsvd)))
   Xauglist <- lapply(Xtlist, function(Xtilde) return(cbind(X, Xtilde)))
-  
+  Glist <- lapply(Xauglist, cov)
   Wlist <- lapply(Slist, function(SS) return(vector('numeric', p)))
   blist <- lapply(Xauglist, function(Xaug) return(coef(lm(Y ~ 0 + Xaug))))
   Wlist <- lapply(blist, function(b) {
@@ -129,6 +134,7 @@ onesimrun <- function(SigmaGen, BETA, N, FDR){
     fdp = sapply(sel, function(ss) return(fdp(ss))),
     tpr = sapply(sel, function(ss) return(tpr(ss))),
     nsel = sapply(sel, length),
+    Geig = sapply(Glist, function(GG) return(eigen(GG, symmetric = T, only.values=T)$val)),
     bmat = do.call('cbind',blist),
     lGdet = sapply(Slist, function(ss) return(ldetGfunc(diag(ss)))),
     s = do.call('cbind',lapply(Slist, function(ss)return(diag(ss))))
