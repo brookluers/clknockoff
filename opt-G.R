@@ -120,7 +120,7 @@ onesimrun <- function(SigmaGen, BETA, N, FDR){
     }
     return(W)
   })
-  thresh <- lapply(Wlist, function(W) return(knockoff.threshold(W, fdr=FDR, offset=0)))
+  thresh <- lapply(Wlist, function(W) return(knockoff.threshold(W, fdr=FDR, offset=1)))
   sel <- mapply(W = Wlist, Tval = thresh,
                 function(W, Tval) return(which(W >= Tval)),
                 SIMPLIFY = FALSE)
