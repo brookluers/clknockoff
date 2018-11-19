@@ -63,19 +63,18 @@ get_ldetgrad <- function(Sigma) {
   return(f)
 }
 
-get_knockoffs <- function(Smat, Sigma_inv, X,Xsvd) {
-  Cmat <- chol((N - 1 ) * (2 * Smat - Smat %*% Sigma_inv %*% Smat), pivot=T)
+get_knockoffs <- function(Smat, Sigma_inv, X, Xsvd) {
+  Cmat <- chol(2 * Smat - Smat %*% Sigma_inv %*% Smat, pivot=T)
   pivot <- attr(Cmat,'pivot')
   po <- order(pivot)
   Cmat <- Cmat[,po]
-  U<- Xsvd$u
+  U <- Xsvd$u
   Q <- qr.Q(qr(cbind(U, matrix(0, nrow=N,ncol=p))))
   Utilde <- Q[,(p+1):(2*p)]
   ## Random Utilde
   #Utilde <- Utilde %*% qr.Q(qr(matrix(rnorm(n=p*p), nrow=p, ncol=p)))
   return(X %*% (diag(p) - Sigma_inv %*% Smat) + Utilde %*% Cmat)
 }
-
 
 stat.olsdiff <- function(X, Xk, y){
   b <- coef(lm(y ~ 0 + cbind(X, Xk)))
@@ -87,13 +86,38 @@ stat.olsdiff <- function(X, Xk, y){
   return(W)
 }
 
+canonical_svd <- function (X) {
+  X.svd = tryCatch({
+    svd(X)
+  }, warning = function(w) {
+  }, error = function(e) {
+    stop("SVD failed in the creation of fixed-design knockoffs. Try upgrading R to version >= 3.3.0")
+  }, finally = {
+  })
+  for (j in 1:min(dim(X))) {
+    i = which.max(abs(X.svd$u[, j]))
+    if (X.svd$u[i, j] < 0) {
+      X.svd$u[, j] = -X.svd$u[, j]
+      X.svd$v[, j] = -X.svd$v[, j]
+    }
+  }
+  return(X.svd)
+}
+normc <- function (X, center = T) {
+  X.centered = scale(X, center = center, scale = F)
+  X.scaled = scale(X.centered, center = F, scale = sqrt(colSums(X.centered^2)))
+  X.scaled[, ]
+}
+
 onesimrun <- function(SigmaGen, BETA, N, FDR, statfunc = stat.olsdiff, statname='ols'){
   p <- ncol(SigmaGen)
   X <- mvrnorm(n=N, mu=rep(0, p), Sigma=SigmaGen)
-  X <- scale(X, center=T) #scale(X, center=F, scale=sqrt(colSums(X^2)))
-  Sigma <- cov(X)  #crossprod(X)
+  # X <- scale(X, center=T) 
+  X <- normc(X, center=F)
+  #Sigma <- cov(X)
+  Sigma <- crossprod(X)
   Sigma_inv <- solve(Sigma)
-  Xsvd <- svd(X)
+  Xsvd <- canonical_svd(X)
   S_equi <- diag(rep(min(c(2 * min(eigen(Sigma)$values), 1))  , p))
   S_sdp <- diag(create.solve_sdp(Sigma))
   
@@ -113,7 +137,7 @@ onesimrun <- function(SigmaGen, BETA, N, FDR, statfunc = stat.olsdiff, statname=
                      c('equi', 'sdp', 'Gdet'))
   Xtlist <- lapply(Slist, function(SS) return(get_knockoffs(SS, Sigma_inv, X, Xsvd)))
   Xauglist <- lapply(Xtlist, function(Xtilde) return(cbind(X, Xtilde)))
-  Glist <- lapply(Xauglist, cov)
+  Glist <- lapply(Xauglist, crossprod)
   Geig <- lapply(Glist, function(G) return(eigen(G,only.values=T,symmetric=T)$values))
   Wlist <- lapply(Xtlist, function(Xk) return(statfunc(X, Xk, Y)))
   thresh <- lapply(Wlist, function(W) return(knockoff.threshold(W, fdr=FDR, offset=1)))
@@ -132,5 +156,3 @@ onesimrun <- function(SigmaGen, BETA, N, FDR, statfunc = stat.olsdiff, statname=
     statname = statname
   ))
 }
-
-
