@@ -81,7 +81,17 @@ get_knockoffs <- function(Smat, Sigma_inv, X,Xsvd) {
 }
 
 
-onesimrun <- function(SigmaGen, BETA, N, FDR){
+stat.olsdiff <- function(X, Xk, y){
+  b <- coef(lm(y ~ 0 + cbind(X, Xk)))
+  p <- ncol(X)
+  W <- vector('numeric', p)
+  for (j in seq_along(W)) {
+    W[j] <- abs(b[j]) - abs(b[j + p])
+  }
+  return(W)
+}
+
+onesimrun <- function(SigmaGen, BETA, N, FDR, statfunc = stat.olsdiff, statname='ols'){
   p <- ncol(SigmaGen)
   X <- mvrnorm(n=N, mu=rep(0, p), Sigma=SigmaGen)
   X <- scale(X, center=T) #scale(X, center=F, scale=sqrt(colSums(X^2)))
@@ -116,15 +126,7 @@ onesimrun <- function(SigmaGen, BETA, N, FDR){
   Xtlist <- lapply(Slist, function(SS) return(get_knockoffs(SS, Sigma_inv, X, Xsvd)))
   Xauglist <- lapply(Xtlist, function(Xtilde) return(cbind(X, Xtilde)))
   Glist <- lapply(Xauglist, cov)
-  Wlist <- lapply(Slist, function(SS) return(vector('numeric', p)))
-  blist <- lapply(Xauglist, function(Xaug) return(coef(lm(Y ~ 0 + Xaug))))
-  Wlist <- lapply(blist, function(b) {
-    W <- vector('numeric', p)
-    for (j in seq_along(W)) {
-      W[j] <- abs(b[j]) - abs(b[j + p])
-    }
-    return(W)
-  })
+  Wlist <- lapply(Xtlist, function(Xk) return(statfunc(X, Xk, Y)))
   thresh <- lapply(Wlist, function(W) return(knockoff.threshold(W, fdr=FDR, offset=1)))
   sel <- mapply(W = Wlist, Tval = thresh,
                 function(W, Tval) return(which(W >= Tval)),
@@ -135,9 +137,9 @@ onesimrun <- function(SigmaGen, BETA, N, FDR){
     tpr = sapply(sel, function(ss) return(tpr(ss))),
     nsel = sapply(sel, length),
     Geig = sapply(Glist, function(GG) return(eigen(GG, symmetric = T, only.values=T)$val)),
-    bmat = do.call('cbind',blist),
     lGdet = sapply(Slist, function(ss) return(ldetGfunc(diag(ss)))),
-    s = do.call('cbind',lapply(Slist, function(ss)return(diag(ss))))
+    s = do.call('cbind',lapply(Slist, function(ss)return(diag(ss)))),
+    statname = statname
   ))
 }
 

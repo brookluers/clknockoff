@@ -46,17 +46,36 @@ Gres <- bind_rows(Gres)
 resfmt %>% group_by(type, rho,SigmaType,p) %>%
   summarise(mfdr = mean(fdp)) %>%
   ggplot(aes(x=rho,y=mfdr,color=type))+
-  geom_line() + 
+  geom_line() + geom_point()+
   facet_wrap(~SigmaType+p,scales='free')
 
 
 resfmt %>% group_by(type, rho,SigmaType,p) %>%
   summarise(mtpr = mean(tpr)) %>%
   ggplot(aes(x=rho,y=mtpr,color=type))+
-  geom_line() + 
+  geom_line() + geom_point()+
   facet_wrap(~SigmaType+p,scales='free')
 
 resfmt %>% 
   ggplot(aes(x=nsel,y=..density..,fill=type))+
   geom_histogram(bins=10,position='dodge')+
   facet_wrap(~SigmaType+p)
+
+Gres%>%
+  gather(equi,sdp,Gdet,key='method',value='ev')%>%
+  group_by(sim_ix,method,SigmaType,p,rho)%>%
+  summarise(maxev=max(ev),
+            minev=min(ev)) %>% ungroup %>%
+  mutate(minev = ifelse(minev < 1e-8, 0, minev)) ->Gresfmt
+
+Gresfmt %>%
+  filter(p==10)%>%
+  ggplot(aes(x=minev,y=..density..,fill=method))+
+  geom_histogram(position='dodge',bins=20)+
+  facet_grid(SigmaType~rho,scales='free')
+
+Gresfmt %>%
+  filter(p==10)%>%
+  ggplot(aes(x=rho,y=log(maxev/minev),color=method))+
+  geom_point(shape=1)+
+  facet_wrap(~SigmaType,scales='free')
