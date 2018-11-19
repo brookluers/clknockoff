@@ -19,15 +19,17 @@ options(cores=mycores)
 options(mc.cores=mycores)
 cat("\n--using "); cat(mycores); cat(" cores\n")
 
-k <- min(c(p/2, 10))
+k <- min(c(floor(p/1.5), 30))
 A <- 3.5
 FDR <- 0.2
 cat("\nFDR = "); cat(FDR);
 kcols <- sample(1:p, size = k, replace = FALSE)
 BETA <- vector('numeric', length=p)
 BETA[kcols] <- sample(c(A, -A), size = k, replace = TRUE)
+
 fdp <- function(selected) sum(BETA[selected] == 0) / max(1, length(selected))
-tpr <- function(selected) sum(BETA[selected] != 0) / max(1, length(selected))
+ppv <- function(selected) sum(BETA[selected] != 0) / max(1, length(selected))
+tpr <- function(selected) sum(BETA[selected] != 0) / k
 
 rhotest <- seq(0.1,0.9,length.out = 8)
 SigmaGenList <- lapply(rhotest, function(rho) {

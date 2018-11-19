@@ -1,6 +1,7 @@
 library(knockoff)
 library(MASS)
 
+
 get_detfun <- function(Sigma){
   f <- function(svec){
     return(
@@ -50,18 +51,13 @@ get_ldetfun <- function(Sigma) {
 
 get_ldetgrad <- function(Sigma) {
   p <- ncol(Sigma)
-  Jlist <- vector('list', p)
-  for (j in seq_along(Jlist)){
-    Jlist[[j]] <- matrix(0,nrow=p,ncol=p)
-    Jlist[[j]][j,j] <- 1
-  }
+  ## single-entry matrix (jj) selects the jth column
+  # when right multiplied
   f <- function(svec){
     ret <- vector('numeric', p)
-    S <- diag(svec)
-    W <- 2 * Sigma - S
-    for (j in 1:p){
-      ret[j] <- 1 / svec[j] + sum(diag(-solve(W, Jlist[[j]])))
-    }
+    W <- 2 * Sigma - diag(svec)
+    Winv <- solve(W)
+    ret <- 1 / svec - diag(Winv)
     return(ret)
   }
   return(f)
@@ -103,13 +99,6 @@ onesimrun <- function(SigmaGen, BETA, N, FDR, statfunc = stat.olsdiff, statname=
   
   ldetGfunc <- get_ldetfun(Sigma)
   ldetGgrad <- get_ldetgrad(Sigma)
-  #Gopt <- optim(rep(0.5,p), 
-  #      fn = ldetGfunc,
-  #      gr = ldetGgrad, 
-        #method = "L-BFGS-B",
-        #lower = rep(0,p),
-        #upper = rep(1,p),
-   #     control = list(fnscale=-1))
   # Optimize over 0 <= s_j <= 1
   Gopt <-
     constrOptim(rep(0.001,p),
@@ -119,13 +108,13 @@ onesimrun <- function(SigmaGen, BETA, N, FDR, statfunc = stat.olsdiff, statname=
                 ci = c(rep(0,p), rep(-1, p)),
                 control = list(fnscale = -1))
   S_Gdet <- diag(Gopt$par)
-  
   Y <- rnorm(N) + X %*% BETA
   Slist <- setNames( list(S_equi, S_sdp, S_Gdet),
                      c('equi', 'sdp', 'Gdet'))
   Xtlist <- lapply(Slist, function(SS) return(get_knockoffs(SS, Sigma_inv, X, Xsvd)))
   Xauglist <- lapply(Xtlist, function(Xtilde) return(cbind(X, Xtilde)))
   Glist <- lapply(Xauglist, cov)
+  Geig <- lapply(Glist, function(G) return(eigen(G,only.values=T,symmetric=T)$values))
   Wlist <- lapply(Xtlist, function(Xk) return(statfunc(X, Xk, Y)))
   thresh <- lapply(Wlist, function(W) return(knockoff.threshold(W, fdr=FDR, offset=1)))
   sel <- mapply(W = Wlist, Tval = thresh,
@@ -135,8 +124,9 @@ onesimrun <- function(SigmaGen, BETA, N, FDR, statfunc = stat.olsdiff, statname=
   return(list(
     fdp = sapply(sel, function(ss) return(fdp(ss))),
     tpr = sapply(sel, function(ss) return(tpr(ss))),
+    ppv = sapply(sel, function(ss) return(ppv(ss))),
     nsel = sapply(sel, length),
-    Geig = sapply(Glist, function(GG) return(eigen(GG, symmetric = T, only.values=T)$val)),
+    Geig = sapply(Geig,function(x)return(c(min(x),max(x)))),
     lGdet = sapply(Slist, function(ss) return(ldetGfunc(diag(ss)))),
     s = do.call('cbind',lapply(Slist, function(ss)return(diag(ss)))),
     statname = statname
