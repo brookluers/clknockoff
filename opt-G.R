@@ -63,7 +63,24 @@ get_ldetgrad <- function(Sigma) {
   return(f)
 }
 
-get_knockoffs <- function(Smat, Sigma_inv, X, Xsvd) {
+
+get_knockoffs <- function(svec, X, Xsvd) {
+  VDi <- sweep(Xsvd$v, MARGIN=2, 1/Xsvd$d, `*`)
+  SVDi <- sweep(VDi, MARGIN=1, svec, `*`)
+  Sigma_inv_S <- tcrossprod(VDi, SVDi)
+  nSSigiS <- -tcrossprod(SVDi)
+  diag(nSSigiS) <- diag(nSSigiS) + 2 * svec
+  Cmat <- chol(nSSigiS, pivot=T)
+  pivot <- attr(Cmat,'pivot')
+  po <- order(pivot)
+  Cmat <- Cmat[,po]
+  U <- Xsvd$u
+  Q <- qr.Q(qr(cbind(U, matrix(0, nrow=N,ncol=p))))
+  Utilde <- Q[,(p+1):(2*p)]
+  return(X - X %*% Sigma_inv_S + Utilde %*% Cmat)
+}
+
+get_knockoffs_old <- function(Smat, Sigma_inv, X, Xsvd) {
   Cmat <- chol(2 * Smat - Smat %*% Sigma_inv %*% Smat, pivot=T)
   pivot <- attr(Cmat,'pivot')
   po <- order(pivot)
@@ -72,12 +89,12 @@ get_knockoffs <- function(Smat, Sigma_inv, X, Xsvd) {
   Q <- qr.Q(qr(cbind(U, matrix(0, nrow=N,ncol=p))))
   Utilde <- Q[,(p+1):(2*p)]
   ## Random Utilde
-  #Utilde <- Utilde %*% qr.Q(qr(matrix(rnorm(n=p*p), nrow=p, ncol=p)))
+  #  Utilde <- Utilde %*% qr.Q(qr(matrix(rnorm(n=p*p), nrow=p, ncol=p)))
   return(X %*% (diag(p) - Sigma_inv %*% Smat) + Utilde %*% Cmat)
 }
 
 stat.olsdiff <- function(X, Xk, y){
-  b <- coef(lm(y ~ 0 + cbind(X, Xk)))
+  b <- .lm.fit(cbind(X,Xk), y)$coefficients
   p <- ncol(X)
   W <- vector('numeric', p)
   for (j in seq_along(W)) {
@@ -103,24 +120,35 @@ canonical_svd <- function (X) {
   }
   return(X.svd)
 }
+
 normc <- function (X, center = T) {
   X.centered = scale(X, center = center, scale = F)
   X.scaled = scale(X.centered, center = F, scale = sqrt(colSums(X.centered^2)))
   X.scaled[, ]
 }
 
-onesimrun <- function(SigmaGen, BETA, N, FDR, statfunc = stat.olsdiff, statname='ols'){
+get_Xgenfunc <- function(SigmaGen, N){
+  L <- chol(SigmaGen)
   p <- ncol(SigmaGen)
-  X <- mvrnorm(n=N, mu=rep(0, p), Sigma=SigmaGen)
-  # X <- scale(X, center=T) 
+  f <- function() {
+      matrix(rnorm(N*p), nrow=N, ncol=p) %*% L
+  }
+  return(f)
+}
+
+onesimrun <- function(SigmaGen, Xgenfunc, BETA, N, FDR, statfunclist) {
+  statnames <- names(statfunclist)
+  p <- ncol(SigmaGen)
+  X <- Xgenfunc()
   X <- normc(X, center=F)
-  #Sigma <- cov(X)
   Sigma <- crossprod(X)
-  Sigma_inv <- solve(Sigma)
   Xsvd <- canonical_svd(X)
-  S_equi <- diag(rep(min(c(2 * min(eigen(Sigma)$values), 1))  , p))
-  S_sdp <- diag(create.solve_sdp(Sigma))
-  
+  svec_equi <- rep(min(c(2 * min(Xsvd$d^2), 1))  , p)
+  if (p > 100){
+    svec_sdp <- create.solve_asdp(Sigma)
+  } else{
+    svec_sdp <- create.solve_sdp(Sigma)
+  }
   ldetGfunc <- get_ldetfun(Sigma)
   ldetGgrad <- get_ldetgrad(Sigma)
   # Optimize over 0 <= s_j <= 1
@@ -131,28 +159,42 @@ onesimrun <- function(SigmaGen, BETA, N, FDR, statfunc = stat.olsdiff, statname=
                 ui = rbind(diag(p), -diag(p)),
                 ci = c(rep(0,p), rep(-1, p)),
                 control = list(fnscale = -1))
-  S_Gdet <- diag(Gopt$par)
   Y <- rnorm(N) + X %*% BETA
-  Slist <- setNames( list(S_equi, S_sdp, S_Gdet),
-                     c('equi', 'sdp', 'Gdet'))
-  Xtlist <- lapply(Slist, function(SS) return(get_knockoffs(SS, Sigma_inv, X, Xsvd)))
-  Xauglist <- lapply(Xtlist, function(Xtilde) return(cbind(X, Xtilde)))
-  Glist <- lapply(Xauglist, crossprod)
-  Geig <- lapply(Glist, function(G) return(eigen(G,only.values=T,symmetric=T)$values))
-  Wlist <- lapply(Xtlist, function(Xk) return(statfunc(X, Xk, Y)))
-  thresh <- lapply(Wlist, function(W) return(knockoff.threshold(W, fdr=FDR, offset=1)))
-  sel <- mapply(W = Wlist, Tval = thresh,
-                function(W, Tval) return(which(W >= Tval)),
-                SIMPLIFY = FALSE)
-  
-  return(list(
-    fdp = sapply(sel, function(ss) return(fdp(ss))),
-    tpr = sapply(sel, function(ss) return(tpr(ss))),
-    ppv = sapply(sel, function(ss) return(ppv(ss))),
-    nsel = sapply(sel, length),
-    Geig = sapply(Geig,function(x)return(c(min(x),max(x)))),
-    lGdet = sapply(Slist, function(ss) return(ldetGfunc(diag(ss)))),
-    s = do.call('cbind',lapply(Slist, function(ss)return(diag(ss)))),
-    statname = statname
+  sveclist <- setNames(
+    list(svec_equi, svec_sdp, Gopt$par),
+    c('equi', 'sdp', 'Gdet')
+  )
+  Xtlist <- lapply(sveclist, function(ss) return(get_knockoffs(ss, X, Xsvd)))
+  Wlist <- 
+    lapply(statfunclist, function(stf) return(
+      lapply(Xtlist, function(Xk) return(stf(X, Xk, Y)))
   ))
+  thresh <- 
+    lapply(Wlist,
+         function(statW) return(
+           lapply(statW, function(W) return(knockoff.threshold(W, fdr=FDR, offset=1)))
+         ))
+  sel <- 
+    mapply(W_stat = Wlist, thresh_stat = thresh,
+           function(W_stat, thresh_stat){
+             mapply(W = W_stat, Tval = thresh_stat,
+                    function(W, Tval) return(which(W >= Tval)),
+                    SIMPLIFY = FALSE)
+           }, SIMPLIFY = F
+           )
+  ret <- lapply(sel,
+         function(sel_stat) return(
+           list(
+             fdp = sapply(sel_stat, function(ss) return(fdp(ss))),
+             tpr = sapply(sel_stat, function(ss) return(tpr(ss))),
+             ppv = sapply(sel_stat, function(ss) return(ppv(ss))),
+             nsel = sapply(sel_stat, length),
+             lGdet = sapply(sveclist, function(ss) return(ldetGfunc(ss))),
+             s = do.call('cbind', sveclist)
+           )
+         ))
+  for(j in seq_along(ret)){
+    ret$statname <- statnames[j]
+  }
+  return()
 }
