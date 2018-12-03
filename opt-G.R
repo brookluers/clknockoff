@@ -194,7 +194,7 @@ onesimrun <- function(SigmaGen, Xgenfunc, BETA, N, FDR, statfunclist) {
            )
          ))
   for(j in seq_along(ret)){
-    ret$statname <- statnames[j]
+    ret[[j]]$statname <- statnames[j]
   }
-  return()
+  return(ret)
 }
