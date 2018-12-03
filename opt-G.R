@@ -29,14 +29,14 @@ get_detgrad <- function(Sigma){
   return(f)
 }
 
-get_ldetfun <- function(Sigma) {
+get_ldetfun <- function(Sigma, tol=1e-12) {
   # det(G) = det(S) * det(2Sigma - S)
   #log(det(G)) = sum(log(eigenvalues of S)) + sum(log(eigenvalues of 2Sigma - S))
   f <- function(svec) {
     # Wdet <- determinant(2 * Sigma - diag(svec), logarithm = T)
     W <- 2 * Sigma - diag(svec)
     Wev <- eigen(W, symmetric = T, only.values = T)$values
-    if (any(Wev < 0)) {
+    if (any(Wev < tol)) {
       return(-Inf)
     } else{
       return(
