@@ -3,7 +3,6 @@ args <- commandArgs(trailingOnly=TRUE)
 library(parallel)
 library(knockoff)
 library(MASS)
-source("opt-G.R")
 source("tune-knockoff.R")
 N <- as.numeric(args[1])
 p <- as.numeric(args[2])
@@ -13,10 +12,11 @@ mycores <- args[5]
 sigmatype <- args[6]
 betatype <- args[7]
 k <- as.numeric(args[8])
-if (is.na(args[9])){
+r2 <- as.numeric(args[9])
+if (is.na(args[10])){
   rhotest <- seq(0.1,0.9,length.out = 8)
 } else {
-  rhotest <- as.numeric(args[9])
+  rhotest <- as.numeric(args[10])
 }
 
 set.seed(myseed)
@@ -33,11 +33,11 @@ cat("\n--using "); cat(mycores); cat(" cores\n")
 
 ### Some 'global' values
 lambda_ridge <- 0.2
-beta_max <- 3.5
 FDR <- 0.2
-
 kindices <- sample(1:p, size = k, replace = FALSE)
 k_signs <- sample(c(1,-1), size=k, replace=T)
+cat("\nnominal FDR = "); cat(FDR)
+cat("\ndesired R^2 = "); cat(r2)
 
 get_Xgenfunc <- function(SigmaGen, N){
   L <- chol(SigmaGen)
@@ -64,10 +64,11 @@ getSigma_ar1 <- function(p, rho){
 getSigma_1band <- function(p, rho) {
   Sigma <- matrix(0, nrow=p, ncol=p)
   for (j in 1:(p-1)){
-    Sigma[j,j+1] <- tau
+    Sigma[j,j+1] <- rho
   }
   Sigma <- Sigma + t(Sigma)
   diag(Sigma) <- 1
+  return(Sigma)
 }
 
 getBETA_linear <- function(p, k, beta_max, kindices, k_signs){
@@ -96,32 +97,39 @@ if (sigmatype == 'exch'){
   getSigmaFunc <- getSigma_ar1
 } else if (sigmatype == '1band'){
   getSigmaFunc <- getSigma_1band
+  max_rho <- min(abs(-1/(2*cos((1:p)*pi/(p+1)))))
+  cat("\nbanded SigmaGen: maximum correlation = "); cat(max_rho)
+  cat(" to prevent singular SigmaGen\n")
+  if(length(rhotest)>1){
+    rhotest <- seq(0.1, max_rho * 0.95, length.out=length(rhotest))
+  } else if (max(rhotest) > max_rho){
+    cat("\ndesired rho is too big, setting to "); cat(max_rho)
+    cat(" * 0.95")
+    cat("\n")
+    rhotest <- max_rho * 0.95
+  }
 } else {
   cat("unknown Sigma structure\nusing exchangeable\n\n")
   getSigmaFunc <- getSigma_exch
 }
 
 if (betatype =='linear'){
-  BETA <- getBETA_linear(p, k, beta_max=beta_max, kindices=kindices, k_signs=k_signs)
+  BETAfunc <- getBETA_linear
 } else if (betatype=='exponential'){
-  BETA <- getBETA_exponential(p, k, beta_max=beta_max, kindices=kindices, k_signs=k_signs)
+  BETAfunc <- getBETA_exponential
 } else if (betatype=='flat'){
-  BETA <- getBETA_flat(p, k, beta_max=beta_max, kindices=kindices, k_signs=k_signs)
+  BETAfunc <- getBETA_flat
 } else if (betatype=='constant'){
-  BETA <- getBETA_flat(p, k, beta_max=beta_max, kindices=kindices, k_signs=k_signs)
+  BETAfunc <- getBETA_flat
 } else {
   cat("unknown structure for BETA specified\nusing constant magnitudes\n\n")
-  BETA <- getBETA_flat(p, k, beta_max=beta_max, kindices=kindices, k_signs=k_signs)
+  BETAfunc <- getBETA_flat
 }
 
-BETA_smaller <- outer(BETA,BETA,FUN=function(a,b) return(abs(a) <= abs(b)))
-BETA_smaller <- BETA_smaller[lower.tri(BETA_smaller,diag=F)]
+bmseq <- seq(0.1,20,length.out=200)
+BETA_grid <- sapply(bmseq, function(bmax) return(BETAfunc(p, k, bmax, kindices, k_signs)))
 
-fdp <- function(selected) sum(BETA[selected] == 0) / max(1, length(selected))
-ppv <- function(selected) sum(BETA[selected] != 0) / max(1, length(selected))
-tpr <- function(selected) sum(BETA[selected] != 0) / k
-
-onesimrun <- function(SigmaGen, Xgenfunc, BETA, N, FDR, statfunclist) {
+onesimrun <- function(SigmaGen, Xgenfunc, BETA, BETA_smaller, N, FDR, statfunclist) {
   statnames <- names(statfunclist)
   p <- ncol(SigmaGen)
   X <- Xgenfunc()
@@ -198,17 +206,46 @@ statfunclist <- setNames(list(stat.olsdiff,
                               stat.lasso_lambdadiff, 
                               function(X,X_k,y) return(stat.ridge(X,X_k,y,lambda=lambda_ridge))),
                          c('ols','lasso_lambdadiff', 'stat.ridge'))
-simparm <- list(N=N, p=p, BETA=BETA, nsim=nsim, k=k, betatype, sigmatype, myseed=myseed,lambda_ridge,
+simparm <- list(N=N, p=p, nsim=nsim, k=k, kindices, k_signs,
+                betatype, sigmatype, myseed=myseed,lambda_ridge,
                 statfunclist, mycores=mycores, FDR=FDR)
 
 
 ### Run the simulation for each generative Sigma matrix
 for (rj in seq_along(SigmaGenList)){
   SigmaGen <- SigmaGenList[[rj]]
+  
+  cat("\nupper 5x5 block of SigmaGen: \n")
+  print(SigmaGen[1:5,1:5])
+  cat("\n")
+  
+  r2_betamax <- apply(BETA_grid, 2, function(x) return(1 - ( 1 / (t(x) %*% SigmaGen %*% x + 1))))
+  BETA <- BETA_grid[,which.min(abs(r2_betamax - r2))]
+  
+  cat("\nBETA = "); cat(paste(round(BETA,3),collapse=', '))
+  cat("\nR^2 = "); cat(1 - (1 / (1 + t(BETA) %*% SigmaGen %*% BETA)))
+  cat("\n\n")
   Xgenfunc <- get_Xgenfunc(SigmaGen, N)
-  res <- mclapply(1:nsim, function(i) return(onesimrun(SigmaGen, Xgenfunc, BETA, N, FDR, statfunclist)))
-  save(simparm, res, SigmaGen,
-       file = paste("sim-", sigmatype, "Sigma", "-", betatype, "BETA",
-                    "-rho", rhotest[rj], "-N", N, "-p", p,
-                    "-nsim", nsim, ".RData", sep=''))
+  
+  fdp <- function(selected) sum(BETA[selected] == 0) / max(1, length(selected))
+  ppv <- function(selected) sum(BETA[selected] != 0) / max(1, length(selected))
+  tpr <- function(selected) sum(BETA[selected] != 0) / k
+  
+  BETA_smaller <- outer(BETA,BETA,FUN=function(a,b) return(abs(a) <= abs(b)))
+  BETA_smaller <- BETA_smaller[lower.tri(BETA_smaller,diag=F)]
+  
+  res <-
+    mclapply(1:nsim, function(i)
+      return(
+        onesimrun(SigmaGen, Xgenfunc, BETA, BETA_smaller,
+                  N, FDR, statfunclist)
+      ))
+  save(
+    simparm,BETA,
+    res,
+    SigmaGen,
+    file = paste("sim-", sigmatype, "Sigma", "-", betatype, "BETA",
+                 "-rho",rhotest[rj],"-N",N,"-p",p,
+                 "-nsim",nsim,".RData",sep = '')
+  )
 }
