@@ -37,7 +37,11 @@ FDR <- 0.2
 kindices <- sample(1:p, size = k, replace = FALSE)
 k_signs <- sample(c(1,-1), size=k, replace=T)
 cat("\nnominal FDR = "); cat(FDR)
-cat("\ndesired R^2 = "); cat(r2)
+if (betatype!='flatfixed'){
+  cat("\nsetting beta based on fixed R^2, ")
+  cat("\ndesired R^2 = "); cat(r2_betafix)
+} 
+
 
 get_Xgenfunc <- function(SigmaGen, N){
   L <- chol(SigmaGen)
@@ -212,7 +216,7 @@ statfunclist <- setNames(list(stat.olsdiff,
                               stat.lasso_lambdadiff, 
                               function(X,X_k,y) return(stat.ridge(X,X_k,y,lambda=lambda_ridge))),
                          c('ols','lasso_lambdadiff', 'stat.ridge'))
-simparm <- list(N=N, p=p, nsim=nsim, k=k, kindices, k_signs, r2,
+simparm <- list(N=N, p=p, nsim=nsim, k=k, kindices, k_signs, r2_betafix,
                 betatype, sigmatype, myseed=myseed,lambda_ridge,
                 statfunclist, mycores=mycores, FDR=FDR)
 
@@ -229,7 +233,6 @@ for (rj in seq_along(SigmaGenList)){
      r2_betamax <- apply(BETA_grid, 2, function(x) return(1 - ( 1 / (t(x) %*% SigmaGen %*% x + 1))))
      BETA <- BETA_grid[,which.min(abs(r2_betamax - r2))]
   } else {
-     BETA_grid <- sapply(bmseq, function(bmax) return(BETAfunc(p, k, bmax, kindices, k_signs)))
      BETA <- BETAfunc(p, k, r2_betafix, kindices, k_signs)
   }
     
