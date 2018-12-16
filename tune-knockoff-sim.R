@@ -12,7 +12,7 @@ mycores <- args[5]
 sigmatype <- args[6]
 betatype <- args[7]
 k <- as.numeric(args[8])
-r2 <- as.numeric(args[9])
+r2_betafix <- as.numeric(args[9])
 if (is.na(args[10])){
   rhotest <- seq(0.1,0.9,length.out = 8)
 } else {
@@ -121,13 +121,19 @@ if (betatype =='linear'){
   BETAfunc <- getBETA_flat
 } else if (betatype=='constant'){
   BETAfunc <- getBETA_flat
+} else  if (betatype=='flatfixed') {
+  BETAfunc <- getBETA_flat
+  cat("\nfixing |beta_j| = "); cat(r2_betafix);
+  cat(" for all j\n")
 } else {
   cat("unknown structure for BETA specified\nusing constant magnitudes\n\n")
   BETAfunc <- getBETA_flat
 }
 
-bmseq <- seq(0.1,20,length.out=200)
-BETA_grid <- sapply(bmseq, function(bmax) return(BETAfunc(p, k, bmax, kindices, k_signs)))
+if (betatype != "flatfixed"){
+   bmseq <- seq(0.1,20,length.out=200)
+   BETA_grid <- sapply(bmseq, function(bmax) return(BETAfunc(p, k, bmax, kindices, k_signs)))
+}
 
 onesimrun <- function(SigmaGen, Xgenfunc, BETA, BETA_smaller, N, FDR, statfunclist) {
   statnames <- names(statfunclist)
@@ -206,7 +212,7 @@ statfunclist <- setNames(list(stat.olsdiff,
                               stat.lasso_lambdadiff, 
                               function(X,X_k,y) return(stat.ridge(X,X_k,y,lambda=lambda_ridge))),
                          c('ols','lasso_lambdadiff', 'stat.ridge'))
-simparm <- list(N=N, p=p, nsim=nsim, k=k, kindices, k_signs,
+simparm <- list(N=N, p=p, nsim=nsim, k=k, kindices, k_signs, r2,
                 betatype, sigmatype, myseed=myseed,lambda_ridge,
                 statfunclist, mycores=mycores, FDR=FDR)
 
@@ -219,9 +225,14 @@ for (rj in seq_along(SigmaGenList)){
   print(SigmaGen[1:5,1:5])
   cat("\n")
   
-  r2_betamax <- apply(BETA_grid, 2, function(x) return(1 - ( 1 / (t(x) %*% SigmaGen %*% x + 1))))
-  BETA <- BETA_grid[,which.min(abs(r2_betamax - r2))]
-  
+  if (betatype!="flatfixed"){
+     r2_betamax <- apply(BETA_grid, 2, function(x) return(1 - ( 1 / (t(x) %*% SigmaGen %*% x + 1))))
+     BETA <- BETA_grid[,which.min(abs(r2_betamax - r2))]
+  } else {
+     BETA_grid <- sapply(bmseq, function(bmax) return(BETAfunc(p, k, bmax, kindices, k_signs)))
+     BETA <- BETAfunc(p, k, r2_betafix, kindices, k_signs)
+  }
+    
   cat("\nBETA = "); cat(paste(round(BETA,3),collapse=', '))
   cat("\nR^2 = "); cat(1 - (1 / (1 + t(BETA) %*% SigmaGen %*% BETA)))
   cat("\n\n")
@@ -244,7 +255,7 @@ for (rj in seq_along(SigmaGenList)){
     simparm,BETA,
     res,
     SigmaGen,
-    file = paste("sim-", sigmatype, "Sigma", "-", betatype, "BETA",
+    file = paste("sim-", sigmatype, "Sigma", "-", betatype, "BETA", "-", 
                  "-rho",rhotest[rj],"-N",N,"-p",p,
                  "-nsim",nsim,".RData",sep = '')
   )
