@@ -95,6 +95,12 @@ getBETA_flat <- function(p, k, beta_max, kindices, k_signs){
   return(b)
 }
 
+getBETA_linearfixed <- function(p, k, beta_avg, kindices, k_signs){
+  b <- vector('numeric', p)
+  b[kindices] <- seq(beta_avg / 2, 3 * beta_avg / 2, length.out=k) * k_signs
+  return(b)
+}
+
 if (sigmatype == 'exch'){
   getSigmaFunc <- getSigma_exch
 } else if (sigmatype=='ar1'){
@@ -129,17 +135,23 @@ if (betatype =='linear'){
   BETAfunc <- getBETA_flat
   cat("\nfixing |beta_j| = "); cat(r2_betafix);
   cat(" for all j\n")
+} else if (betatype =='linearfixed'){
+  BETAfunc <- getBETA_linearfixed
+  cat("\n average |beta_j| = "); cat(r2_betafix)
+  cat("\n |beta_j| between ")
+  cat(r2_betafix/2); cat(" and ")
+  cat(3*r2_betafix/2)
 } else {
   cat("unknown structure for BETA specified\nusing constant magnitudes\n\n")
   BETAfunc <- getBETA_flat
 }
 
-if (betatype != "flatfixed"){
+if (!(betatype %in% c("flatfixed", "linearfixed"))){
    bmseq <- seq(0.1,20,length.out=200)
    BETA_grid <- sapply(bmseq, function(bmax) return(BETAfunc(p, k, bmax, kindices, k_signs)))
 }
 
-onesimrun <- function(SigmaGen, Xgenfunc, BETA, BETA_smaller, N, FDR, statfunclist) {
+onesimrun <- function(SigmaGen, Xgenfunc, BETA, BETA_smaller, BETA_neq_ix, N, FDR, statfunclist) {
   statnames <- names(statfunclist)
   p <- ncol(SigmaGen)
   X <- Xgenfunc()
@@ -181,8 +193,8 @@ onesimrun <- function(SigmaGen, Xgenfunc, BETA, BETA_smaller, N, FDR, statfuncli
     lapply(Wlist,
            function(statW) return(
              lapply(statW, function(W) return(
-               mean(outer(W,W,FUN=function(a,b) return(a>b))[lower.tri(SigmaGen,diag=F)] & 
-                      BETA_smaller) ))
+               mean(outer(W, W, FUN = function(a,b) return(a>b))[lower.tri(SigmaGen,diag=F)][BETA_neq_ix] & 
+                      BETA_smaller[BETA_neq_ix]) ))
            ))
   sel <- 
     mapply(W_stat = Wlist, thresh_stat = thresh,
@@ -229,7 +241,7 @@ for (rj in seq_along(SigmaGenList)){
   print(SigmaGen[1:5,1:5])
   cat("\n")
   
-  if (betatype!="flatfixed"){
+  if (!(betatype %in% c("flatfixed","linearfixed"))) {
      r2_betamax <- apply(BETA_grid, 2, function(x) return(1 - ( 1 / (t(x) %*% SigmaGen %*% x + 1))))
      BETA <- BETA_grid[,which.min(abs(r2_betamax - r2))]
   } else {
@@ -245,13 +257,16 @@ for (rj in seq_along(SigmaGenList)){
   ppv <- function(selected) sum(BETA[selected] != 0) / max(1, length(selected))
   tpr <- function(selected) sum(BETA[selected] != 0) / k
   
-  BETA_smaller <- outer(BETA,BETA,FUN=function(a,b) return(abs(a) <= abs(b)))
+  BETA_smaller <- outer(BETA,BETA,FUN=function(a,b) return(abs(a) < abs(b)))
   BETA_smaller <- BETA_smaller[lower.tri(BETA_smaller,diag=F)]
+  eqtol <- 1e-7
+  BETA_neq_ix <- outer(BETA, BETA, FUN=function(a,b) return(abs(a -b) > eqtol))
+  BETA_neq_ix <- which(BETA_neq_ix[lower.tri(BETA_neq_ix,diag=F)])
   
   res <-
     mclapply(1:nsim, function(i)
       return(
-        onesimrun(SigmaGen, Xgenfunc, BETA, BETA_smaller,
+        onesimrun(SigmaGen, Xgenfunc, BETA, BETA_smaller, BETA_neq_ix,
                   N, FDR, statfunclist)
       ))
   save(
