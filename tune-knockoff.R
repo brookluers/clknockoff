@@ -1,4 +1,4 @@
-
+library(MASS)
 get_viffun <- function(Sigma_inv, tol=1e-5){
   f <- function(svec){
     Smat <- diag(svec)
@@ -94,6 +94,21 @@ get_knockoffs <- function(svec, X, Xsvd) {
   Q <- qr.Q(qr(cbind(U, matrix(0, nrow=N,ncol=p))))
   Utilde <- Q[,(p+1):(2*p)]
   return(X - X %*% Sigma_inv_S + Utilde %*% Cmat)
+}
+
+stat.ols.ginv <- function(X, Xk, y){
+  XXk <- cbind(X,Xk) # N times 2*p
+  b <- .lm.fit(XXk, y)$coefficients
+  if (any(is.na(b))){
+    XXk_gi <- ginv(XXk) # 2*p times N
+    b <- XXk_gi %*% y
+  }
+  p <- ncol(X)
+  W <- vector('numeric', p)
+  for (j in seq_along(W)) {
+    W[j] <- abs(b[j]) - abs(b[j + p])
+  }
+  return(W)
 }
 
 stat.olsdiff <- function(X, Xk, y){

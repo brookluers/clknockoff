@@ -225,9 +225,10 @@ onesimrun <- function(SigmaGen, Xgenfunc, BETA, BETA_smaller, BETA_neq_ix, N, FD
 SigmaGenList <- lapply(rhotest, function(rho) return(getSigmaFunc(p, rho)))
 
 statfunclist <- setNames(list(stat.olsdiff, 
+                              stat.ols.ginv,
                               stat.lasso_lambdadiff, 
                               function(X,X_k,y) return(stat.ridge(X,X_k,y,lambda=lambda_ridge))),
-                         c('ols','lasso_lambdadiff', 'stat.ridge'))
+                         c('ols','ols.ginv','lasso_lambdadiff', 'stat.ridge'))
 simparm <- list(N=N, p=p, nsim=nsim, k=k, kindices, k_signs, r2_betafix,
                 betatype, sigmatype, myseed=myseed,lambda_ridge,
                 statfunclist, mycores=mycores, FDR=FDR)
