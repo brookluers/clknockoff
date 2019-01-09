@@ -32,8 +32,8 @@ options(mc.cores=mycores)
 cat("\n--using "); cat(mycores); cat(" cores\n")
 
 ### Some 'global' values
-lambda_ridge <- 0.2
-FDR <- 0.2
+lambda_ridge <- seq(0.01, 1, length.out=20)
+FDR <- 0.1
 kindices <- sample(1:p, size = k, replace = FALSE)
 k_signs <- sample(c(1,-1), size=k, replace=T)
 cat("\nnominal FDR = "); cat(FDR)
@@ -261,7 +261,7 @@ for (rj in seq_along(SigmaGenList)){
   BETA_smaller <- outer(BETA,BETA,FUN=function(a,b) return(abs(a) < abs(b)))
   BETA_smaller <- BETA_smaller[lower.tri(BETA_smaller,diag=F)]
   eqtol <- 1e-7
-  BETA_neq_ix <- outer(BETA, BETA, FUN=function(a,b) return(abs(a -b) > eqtol))
+  BETA_neq_ix <- outer(BETA, BETA, FUN=function(a,b) return(abs(a - b) > eqtol))
   BETA_neq_ix <- which(BETA_neq_ix[lower.tri(BETA_neq_ix,diag=F)])
   
   res <-
