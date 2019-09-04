@@ -9,6 +9,16 @@ get_viffun <- function(Sigma_inv, tol=1e-5){
   return(f)
 }
 
+
+get_all_svec <- function(Sigma){
+  require(knockoff)
+  list(
+    sdp = knockoff::create.solve_sdp(Sigma),
+    ldet = get_s_ldet(Sigma),
+    equi = rep(min(c(1, 2 * min(eigen(Sigma, only.values=TRUE,symmetric = TRUE)$values))), ncol(Sigma))
+  )
+}
+
 get_vifgrad <- function(Sigma_inv){
   p <- ncol(Sigma_inv)
   Jlist <- vector('list', p)
@@ -47,7 +57,7 @@ get_ldetfun <- function(Sigma, tol=1e-12) {
         sum(log(svec)) + sum(log(Wev))
       )
     }
-    
+
   }
   return(f)
 }
@@ -66,21 +76,53 @@ get_ldetgrad <- function(Sigma) {
   return(f)
 }
 
-
-get_knockoffs_old <- function(Smat, Sigma_inv, X, Xsvd) {
-  Cmat <- chol(2 * Smat - Smat %*% Sigma_inv %*% Smat, pivot=T)
-  pivot <- attr(Cmat,'pivot')
-  po <- order(pivot)
-  Cmat <- Cmat[,po]
-  U <- Xsvd$u
-  Q <- qr.Q(qr(cbind(U, matrix(0, nrow=N,ncol=p))))
-  Utilde <- Q[,(p+1):(2*p)]
-  ## Random Utilde
-  #  Utilde <- Utilde %*% qr.Q(qr(matrix(rnorm(n=p*p), nrow=p, ncol=p)))
-  return(X %*% (diag(p) - Sigma_inv %*% Smat) + Utilde %*% Cmat)
+get_s_ldet <- function(Sigma){
+  p <- ncol(Sigma)
+  ldetGfunc <- get_ldetfun(Sigma)
+  ldetGgrad <- get_ldetgrad(Sigma)
+  s_init <- constrOptim(rep(0.001, p),
+                        f = ldetGfunc,
+                        grad = NULL,
+                        ui = rbind(diag(p), -diag(p)),
+                        ci = c(rep(0, p), rep(-1, p)),
+                        control = list(fnscale = -1, maxit=5))$par
+  Gopt <-
+    constrOptim(s_init,
+                f = ldetGfunc,
+                grad = ldetGgrad,
+                ui = rbind(diag(p), -diag(p)),
+                ci = c(rep(0,p), rep(-1, p)),
+                control = list(fnscale = -1))
+  return(Gopt$par)
 }
 
-get_knockoffs <- function(svec, X, Xsvd) {
+get_knockoffs_qr <- function(X, svec, xqr = NULL, random = TRUE, tol = 1e-7){
+  N <- nrow(X)
+  p <- ncol(X)
+  Ginv_S <- sweep(solve(crossprod(X)), 2, svec, FUN =`*`)
+  CtC <- 2 * diag(svec) - diag(svec) %*% Ginv_S
+  CtCeig <- eigen(CtC, symmetric=T)
+  CtCeig$values[CtCeig$values < tol] <- 0
+  Cmat <- diag(sqrt(CtCeig$values)) %*% t(CtCeig$vectors)
+  if (random){
+    if (is.null(xqr)){
+      Q <- qr.Q(qr(X))
+    } else {
+      Q <- qr.Q(xqr)
+    }
+    Utilde <- matrix(rnorm(N*p), nrow=N, ncol=p)
+    Utilde <- Utilde - Q %*% crossprod(Q, Utilde) #(I - QQ^t) Utilde
+    Utilde <- qr.Q(qr(Utilde))
+  } else{
+    Q <- qr.Q(qr(cbind(X, matrix(0, nrow=N, ncol=p))))
+    Utilde <- Q[,(p+1):(2*p)]
+  }
+  return(X - X %*% Ginv_S + Utilde %*% Cmat)
+}
+
+get_knockoffs <- function(svec, X, Xsvd, random=FALSE) {
+  N <- nrow(X)
+  p <- ncol(X)
   VDi <- sweep(Xsvd$v, MARGIN=2, 1/Xsvd$d, `*`)
   SVDi <- sweep(VDi, MARGIN=1, svec, `*`)
   Sigma_inv_S <- tcrossprod(VDi, SVDi)
@@ -90,11 +132,17 @@ get_knockoffs <- function(svec, X, Xsvd) {
   pivot <- attr(Cmat,'pivot')
   po <- order(pivot)
   Cmat <- Cmat[,po]
-  U <- Xsvd$u
-  Q <- qr.Q(qr(cbind(U, matrix(0, nrow=N,ncol=p))))
-  Utilde <- Q[,(p+1):(2*p)]
+  if (!random){
+    Q <- qr.Q(qr(cbind(Xsvd$u, matrix(0, nrow=N,ncol=p))))
+    Utilde <- Q[,(p+1):(2*p)]
+  } else{
+    Utilde <- matrix(rnorm(N*p), nrow=N, ncol=p)
+    Utilde <- Utilde - Xsvd$u %*% crossprod(Xsvd$u, Utilde) #(I - UU^t) Utilde
+    Utilde <- qr.Q(qr(Utilde))
+  }
   return(X - X %*% Sigma_inv_S + Utilde %*% Cmat)
 }
+
 
 stat.ols.ginv <- function(X, Xk, y){
   XXk <- cbind(X,Xk) # N times 2*p
@@ -132,7 +180,7 @@ stat.ridge <- function(X, X_k, y, lambda=NULL){
   } else {
     b <- coef(rfit)
   }
-  
+
   W <- vector('numeric', p)
   for (j in seq_along(W)){
     W[j] <- abs(b[j]) - abs(b[j + p])
