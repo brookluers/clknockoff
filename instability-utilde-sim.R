@@ -40,17 +40,18 @@ knockoff_select <- function(X, svec, xqr, Y, FDR, offset=1, stat = stat.lasso_la
 get_1simfun <- function(N, SigmaGen, BETA, FDR, offset = 1, stat=stat.lasso_coefdiff, random=TRUE){
   k <- sum(abs(BETA) > 0)
   p <- ncol(SigmaGen)
+  X <- mvrnorm(N, mu=rep(0, p), Sigma = SigmaGen)
+  # FIX X, only vary Utilde
+  X <- scale(X, center=T, scale=F)
+  X <- scale(X, center=F, scale=apply(X, 2, function(xj) return(sqrt(sum(xj^2)))))
+  xqr <- qr(X)
+  G <- crossprod(X)
+  s_all <- get_all_svec(G)
+  Y <- X %*% BETA + rnorm(N)
   fdp <- function(selected) sum(BETA[selected] == 0) / max(1, length(selected))
   ppv <- function(selected) sum(BETA[selected] != 0) / max(1, length(selected))
   tpr <- function(selected) sum(BETA[selected] != 0) / k
   ret <- function(i){
-    X <- mvrnorm(N, mu=rep(0, p), Sigma = SigmaGen)
-    X <- scale(X, center=T, scale=F)
-    X <- scale(X, center=F, scale=apply(X, 2, function(xj) return(sqrt(sum(xj^2)))))
-    xqr <- qr(X)
-    Y <- X %*% BETA + rnorm(N)
-    G <- crossprod(X)
-    s_all <- get_all_svec(G)
     sel_all <- lapply(s_all, function(svec) return(knockoff_select(X, svec, xqr, Y, FDR, offset=offset, 
                                                                    stat = stat, 
                                                                    random = random)))
