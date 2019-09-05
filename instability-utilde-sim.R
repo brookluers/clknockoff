@@ -53,15 +53,22 @@ get_1simfun <- function(N, SigmaGen, BETA, FDR, offset = 1, stat=stat.lasso_coef
   ppv <- function(selected) sum(BETA[selected] != 0) / max(1, length(selected))
   tpr <- function(selected) sum(BETA[selected] != 0) / k
   fpr <- function(selected) sum(BETA[selected] == 0) / (p - k)
+  pzeroes <- rep(0, p)
   ret <- function(i){
     sel_all <- lapply(s_all, function(svec) return(knockoff_select(X, svec, xqr, Y, FDR, offset=offset, 
                                                                    stat = stat, 
                                                                    random = random)))
-    return(sapply(sel_all, function(ss) return(c(fdp = fdp(ss),
-                                                 fpr = fpr(ss),
-                                                 ppv = ppv(ss),
-                                                 tpr = tpr(ss),
-                                                 nsel = length(ss)))))
+    sapply(sel_all, function(ss) {
+      ret <- rep(0, p)
+      ret[ss] <- 1
+      names(ret) <- paste('sel', 1:p, sep='')
+      return(c(fdp = fdp(ss),
+               fpr = fpr(ss),
+               ppv = ppv(ss),
+               tpr = tpr(ss),
+               nsel = length(ss),
+               ret))
+    })
   }
   return(ret)
 }
@@ -89,6 +96,7 @@ res_fmt <-
           .id = 'sim') %>%
   gather(sdp, ldet, equi, key='stype', value='val')%>%
   spread(meas, val)
+
 res_fmt$pop_Sigma_cnum <- kappa(SigmaGen, exact = TRUE)
 res_fmt$k <- k
 res_fmt$FDR <- FDR
@@ -96,8 +104,11 @@ res_fmt$signal <- magnitude
 res_fmt$sigmatype <- sigmatype
 res_fmt$rho <- rho
 res_fmt$offset <- offset
+res_fmt$N <- N
+res_fmt$p <- p
 
-write.table(res_fmt, file = paste("utilde-unstable-N", N, "-p", p, "-rho", rho,
+save(res_fmt, BETA, file = paste("utilde-N", N, "-p", p, "-rho", rho,
+                                  "-off", offset, '-',sigmatype,
                                   '.csv', 
-                                  sep=''),
-            quote=F, sep=',', row.names=FALSE)
+                                  sep='')
+)

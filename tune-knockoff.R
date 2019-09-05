@@ -96,14 +96,32 @@ get_s_ldet <- function(Sigma){
   return(Gopt$par)
 }
 
-get_knockoffs_qr <- function(X, svec, xqr = NULL, random = TRUE, tol = 1e-7){
-  N <- nrow(X)
-  p <- ncol(X)
-  Ginv_S <- sweep(solve(crossprod(X)), 2, svec, FUN =`*`)
+get_Cmat_eigen <- function(X, svec, G = NULL, Ginv = NULL, tol=1e-7){
+  if (is.null(G)) {
+    G <- crossprod(X)
+  }
+  if (is.null(Ginv)){
+    Ginv <- solve(G)
+  }
+  Ginv_S <- sweep(Ginv, 2, svec, FUN=`*`)
   CtC <- 2 * diag(svec) - diag(svec) %*% Ginv_S
   CtCeig <- eigen(CtC, symmetric=T)
   CtCeig$values[CtCeig$values < tol] <- 0
   Cmat <- diag(sqrt(CtCeig$values)) %*% t(CtCeig$vectors)
+  return(Cmat)
+}
+
+get_knockoffs_qr <- function(X, svec, xqr = NULL, random = TRUE, tol = 1e-7, Cmat=NULL, Ginv = NULL){
+  N <- nrow(X)
+  p <- ncol(X)
+  G <- crossprod(X)
+  if (is.null(Cmat)){
+    Cmat <- get_Cmat_eigen(X, svec, G, tol=tol)
+  }
+  if (is.null(Ginv)){
+    Ginv <- solve(crossprod(X))
+  }
+  Ginv_S <- sweep(Ginv, 2, svec, FUN=`*`)
   if (random){
     if (is.null(xqr)){
       Q <- qr.Q(qr(X))
