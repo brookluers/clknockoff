@@ -111,10 +111,12 @@ get_Cmat_eigen <- function(X, svec, G = NULL, Ginv = NULL, tol=1e-7){
   return(Cmat)
 }
 
-get_knockoffs_qr <- function(X, svec, xqr = NULL, random = TRUE, tol = 1e-7, Cmat=NULL, Ginv = NULL){
+get_knockoffs_qr <- function(X, svec, xqr = NULL, random = TRUE, tol = 1e-7, Cmat=NULL, Ginv = NULL, G= NULL){
   N <- nrow(X)
   p <- ncol(X)
-  G <- crossprod(X)
+  if (is.null(G)){
+    G <- crossprod(X)
+  }
   if (is.null(Cmat)){
     Cmat <- get_Cmat_eigen(X, svec, G, tol=tol)
   }
