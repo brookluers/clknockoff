@@ -14,10 +14,11 @@ mycores <- as.numeric(args[5])
 sigmatype <- args[6]
 k <- as.numeric(args[7])
 offset <- as.numeric(args[8])
-if (is.na(args[9])){
+nxtil <- as.numeric(args[9]) # number of Xtilde matrices per fixed (X, Y)
+if (is.na(args[10])){
   rho <- 0.8
 } else {
-  rho <- as.numeric(args[9])
+  rho <- as.numeric(args[10])
 }
 RNGkind("L'Ecuyer-CMRG")
 set.seed(myseed)
@@ -55,24 +56,54 @@ selnames <- paste('sel', 1:p, sep='')
 resnames <- c('fdp','fpr','ppv','tpr','nsel', selnames)
 result_length <- length(resnames)
 simres <- vector('list', nsim)
-nxtil <- 50 # number of Xtilde matrices per fixed (X, Y)
 pzeroes <- rep(0, p)
+one_to_p <- 1:p
 select_manyXtilde <- function(svec, X, Qx, Y, abs_XYcp, Cmat, Ginv, FDR, offset, nxtil = 10){
   Ginv_S <- sweep(Ginv, 2, svec, FUN=`*`)
   X_minus_GinvS <- X - X %*% Ginv_S
   Wlist <- vector('list', nxtil)
   for(j in seq_along(Wlist)){
-    Utilde <- matrix(rnorm(N*p), nrow=N, ncol=p)
-    Utilde <- qr.Q(qr(Utilde)) # orthogonalize only, do not project away from proj_xperp(Y)
+    Utilde <- matrix(rnorm(N * p), nrow=N, ncol = p)
     Utilde <- Utilde - Qx %*% crossprod(Qx, Utilde) #(I - QQ^t) Utilde, project away from X
+    Utilde <- qr.Q(qr(Utilde)) # orthogonalize only, do not project away from proj_xperp(Y)
     Xtilde <-  X_minus_GinvS + Utilde %*% Cmat
     Wlist[[j]] <- as.numeric(abs_XYcp - abs(crossprod(Xtilde, Y)))
   }
   # choose vars s.t. estimated prob. of selecting them is at least FDR
   selmat <- do.call('rbind', lapply(Wlist, function(Wm) return(1 * (Wm >= knockoff.threshold(Wm, FDR, offset=offset)))))
-  return(which(apply(selmat, 2, mean) >= FDR))
+  selprob <- apply(selmat, 2, mean)
+  spsum <- sum(selprob)
+  if(spsum < 1e-7){
+    sel1 <- sel2 <- sel3 <- sel4 <- sel5 <- vector('integer', 0)
+  } else {
+    phi_order_dec <- order(selprob,decreasing = TRUE)
+    phi_order_inc <- rev(phi_order_dec)
+    phi_decreasing <- selprob[phi_order_dec]
+    phi_increasing <- rev(phi_decreasing)
+    sel1 <- which( (selprob / spsum) >= FDR)
+    sel2 <- phi_order_dec[(cumsum(phi_decreasing) / spsum) < (1 - FDR)]
+    sel3 <- phi_order_inc[(cumsum(phi_increasing) / spsum) > FDR]
+    sel4 <- phi_order_dec[( cumsum(phi_decreasing) / (one_to_p) )  >= (1 - FDR)]
+    sel5 <- phi_order_inc[ (cumsum(phi_increasing) / (p - one_to_p)) >= FDR]
+  }
+  sel_consensus_list <- list(
+    sel1 = sel1, sel2 = sel2, sel3= sel3, sel4 = sel4, sel5 = sel5
+  )
+  ret <- rbind(method1 = 1 * (one_to_p %in% sel1),
+        method2 = 1 * (one_to_p %in% sel2),
+        method3 = 1 * (one_to_p %in% sel3),
+        method4= 1 * (one_to_p %in% sel4),
+        method5 = 1 * (one_to_p %in% sel5))
+  colnames(ret) <- selnames
+  ret_metrics <- 
+    do.call('rbind',
+          lapply(sel_consensus_list, function(sk) return(c(fdp=fdp(sk),
+                                                   tpr = tpr(sk),
+                                                   ppv=ppv(sk),
+                                                   tpr =tpr(sk),
+                                                   nsel = length(sk)))))
+  return(cbind(ret, ret_metrics))
 }
-
 simres <- 
   foreach(i = 1:length(simres), .combine = rbind) %dopar% {
     X <- mvrnorm(N, mu = pzeroes, Sigma = SigmaGen)
@@ -95,14 +126,10 @@ simres <-
     XYcp <- crossprod(X, Y)
     abs_XYcp <- abs(XYcp)
     sel <- select_manyXtilde(svec, X, Qx, Y, abs_XYcp, Cmat, Ginv, FDR, offset = offset, nxtil = nxtil)
-    c(fdp(sel), fpr(sel), 
-      ppv(sel), tpr(sel), 
-      length(sel), 1 * one_to_p %in% sel)
+    sel
   }
-
 res_fmt <- 
-  as_tibble(simres) %>%
-  mutate(sim_ix = row_number())
+  as_tibble(simres, rownames = 'combine_method')
 res_fmt$pop_Sigma_cnum <- kappa(SigmaGen, exact = TRUE)
 res_fmt$k <- k
 res_fmt$FDR <- FDR
