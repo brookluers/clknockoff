@@ -41,6 +41,17 @@ if (sigmatype == 'exch'){
   SigmaGen <- get_exch(p, rho)
 }
 
+norm_utheta_projy <- function(theta, Utilde1, Utilde2, Y){
+  ret <- vector('numeric', length(theta))
+  for (i in seq_along(ret)){
+    Utheta <- sin(theta[i]) * Utilde1 + cos(theta[i]) * Utilde2
+    ret[i] <- norm(Utheta %*% crossprod(Utheta, Y), 'F')^2
+  }
+  return(ret)
+}
+tseq <- seq((6/16)*pi, (10/16)*pi, length.out=200)
+
+
 BETA <- vector('numeric', p)
 fdp <- function(selected) sum(BETA[selected] == 0) / max(1, length(selected))
 ppv <- function(selected) sum(BETA[selected] != 0) / max(1, length(selected))
@@ -63,7 +74,6 @@ simres <-
     X <- scale(X, center = F, scale = apply(X, 2, function(xj)
       return(sqrt(sum(xj ^ 2)))))
     Xbeta <- X %*% BETA
-    offset <- 1
     xqr <- qr(X)
     Qx <- qr.Q(xqr)
     G <- crossprod(X)
@@ -73,12 +83,14 @@ simres <-
     X_minus_XGinvS <- X - X %*% Ginv_S
     Cmat <- get_Cmat_eigen(X, svec, G, Ginv)
     Y <- Xbeta + rnorm(N)
+    Ynorm2 <- norm(Y, 'F')^2
     XYcp <- crossprod(X, Y)
     abs_XYcp <- abs(XYcp)
     Ylm <- lm(Y ~ 0 + X)
     betahat <- coef(Ylm)
-    ufrac <- p / (N + as.numeric(t(betahat) %*% G %*% cbind(betahat)))
     Yresid <- residuals(Ylm)
+    sig2hat <- sum(Yresid^2) / (N - p)
+    ufrac <- (sig2hat * p) / ((N - p) * sig2hat + as.numeric(t(betahat) %*% G %*% cbind(betahat)))
     norm_Yresid <- norm(cbind(Yresid), type='F')
     Yresid_normed <- Yresid / norm_Yresid
     Utilde <- matrix(rnorm(N*p), nrow=N, ncol=p)
@@ -88,22 +100,39 @@ simres <-
     Utilde_yperp <- matrix(rnorm(N*p), nrow=N, ncol=p)
     Utilde_yperp <- Utilde_yperp - Q_xuy %*% crossprod(Q_xuy, Utilde_yperp) # project away from Yresid, X, Utilde
     Utilde_yperp <- qr.Q(qr(Utilde_yperp)) # orthogonalize
-    Utilde_avg  <- ufrac * Utilde + (1 - ufrac) * Utilde_yperp
-    Xtilde_Uavg <-  X_minus_XGinvS + Utilde_avg %*% Cmat
+    Utilde_contain_yperp <- cbind(Yresid_normed, matrix(rnorm(N*(p-1)), nrow=N, ncol=(p-1)))
+    Q_xu <- qr.Q(qr(cbind(Utilde, Qx)))
+    Utilde_contain_yperp <- Utilde_contain_yperp - Q_xu %*% crossprod(Q_xu, Utilde_contain_yperp)
+    Utilde_contain_yperp <- qr.Q(qr(Utilde_contain_yperp))
+    nu2y_tseq <- norm_utheta_projy(tseq, Utilde, Utilde_yperp, Y)
+    nu2yfrac_tseq <- nu2y_tseq / Ynorm2
+    nu3y_tseq <- norm_utheta_projy(tseq, Utilde, Utilde_contain_yperp, Y)
+    nu3yfrac_tseq <- nu3y_tseq / Ynorm2
+    minu3frac.ix <- which.min(abs(nu3yfrac_tseq - ufrac))
+    minu2frac.ix <- which.min(abs(nu2yfrac_tseq - ufrac))
+    if (abs(nu3yfrac_tseq[minu3frac.ix] - ufrac) < abs(nu2yfrac_tseq[minu2frac.ix] - ufrac)) {
+      theta <- tseq[minu3frac.ix]
+      Utheta <- sin(theta) * Utilde + cos(theta) * Utilde_contain_yperp
+    } else {
+      theta <- tseq[minu2frac.ix]
+      Utheta <- sin(theta) * Utilde + cos(theta) * Utilde_contain_yperp
+    }
+    
+    Xtilde_Utheta <-  X_minus_XGinvS + Utheta %*% Cmat
     Xtilde <- X_minus_XGinvS + Utilde %*% Cmat
-    W_Uavg <- as.numeric(abs_XYcp - abs(crossprod(Xtilde_Uavg, Y))) # simple correlation differences
+    W_Utheta <- as.numeric(abs_XYcp - abs(crossprod(Xtilde_Utheta, Y))) # simple correlation differences
     W_regular <- as.numeric(abs_XYcp - abs(crossprod(Xtilde, Y)))
-    sel_Uavg <- which(W_Uavg >= knockoff.threshold(W_Uavg, FDR, offset=offset))
+    sel_Utheta <- which(W_Utheta >= knockoff.threshold(W_Utheta, FDR, offset=offset))
     sel_regular <- which(W_regular >= knockoff.threshold(W_regular, FDR, offset=offset))
     
     ret_i <- 
       rbind(
-        c(i, norm(Utilde_avg %*% crossprod(Utilde_avg, Y), 'F')^2,
+        c(i, norm(Utheta %*% crossprod(Utheta, Y), 'F')^2,
           NA, # uunormfrac
-          fdp(sel_Uavg),
-          fpr(sel_Uavg),  ppv(sel_Uavg),
-          tpr(sel_Uavg), length(sel_Uavg),
-          1 * (one_to_p %in% sel_Uavg)
+          fdp(sel_Utheta),
+          fpr(sel_Utheta),  ppv(sel_Utheta),
+          tpr(sel_Utheta), length(sel_Utheta),
+          1 * (one_to_p %in% sel_Utheta)
         ),
         c(i, norm(Utilde %*% crossprod(Utilde, Y), 'F')^2,
           NA, # uunormfrac
@@ -114,8 +143,8 @@ simres <-
         )
       )
     colnames(ret_i) <- resnames
-    rownames(ret_i) <- c('Uavg', 'Utilde')
-    ret_i[,'uuynormfrac'] <- ret_i[,'uuynorm'] / norm(Y, 'F')^2
+    rownames(ret_i) <- c('Utheta', 'Utilde')
+    ret_i[,'uuynormfrac'] <- ret_i[,'uuynorm'] / Ynorm2
     ret_i
 }
 
