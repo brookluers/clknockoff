@@ -189,6 +189,12 @@ stat.olsdiff <- function(X, Xk, y){
   return(W)
 }
 
+stat.crossprod <- function(X, Xk, y){
+  XYcp <- crossprod(X, y)
+  abs_XYcp <- abs(XYcp)
+  return(as.numeric(abs_XYcp - abs(crossprod(Xk, y))))
+}
+
 stat.ridge <- function(X, X_k, y, lambda=NULL){
   if (is.null(lambda)){
     lambda <- c(seq(0.01,0.99,length.out=20))

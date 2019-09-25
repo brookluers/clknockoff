@@ -4,6 +4,7 @@ library(parallel)
 library(knockoff)
 library(MASS)
 source("tune-knockoff.R")
+source("pop-cov-funcs.R")
 N <- as.numeric(args[1])
 p <- as.numeric(args[2])
 nsim <- as.numeric(args[3])
@@ -12,7 +13,7 @@ mycores <- args[5]
 sigmatype <- args[6]
 betatype <- args[7]
 k <- as.numeric(args[8])
-r2_betafix <- as.numeric(args[9])
+r2_betafix <- as.numeric(args[9]) # or the signal magnitude
 if (is.na(args[10])){
   rhotest <- seq(0.1,0.9,length.out = 8)
 } else {
@@ -42,39 +43,6 @@ if (betatype!='flatfixed'){
   cat("\ndesired R^2 = "); cat(r2_betafix)
 } 
 
-
-get_Xgenfunc <- function(SigmaGen, N){
-  L <- chol(SigmaGen)
-  p <- ncol(SigmaGen)
-  f <- function() {
-    matrix(rnorm(N*p), nrow=N, ncol=p) %*% L
-  }
-  return(f)
-}
-
-getSigma_exch <- function(p, rho){
-  SigmaGen <- matrix(0, nrow=p, ncol=p)
-  SigmaGen[lower.tri(SigmaGen, diag = F)] <- rho
-  SigmaGen <- SigmaGen + t(SigmaGen) + diag(p)
-  return(SigmaGen)
-}
-
-getSigma_ar1 <- function(p, rho){
-  SigmaGen <- matrix(0, nrow=p, ncol=p)
-  SigmaGen <- rho^abs(row(SigmaGen) - col(SigmaGen))
-  return(SigmaGen)
-}
-
-getSigma_1band <- function(p, rho) {
-  Sigma <- matrix(0, nrow=p, ncol=p)
-  for (j in 1:(p-1)){
-    Sigma[j,j+1] <- rho
-  }
-  Sigma <- Sigma + t(Sigma)
-  diag(Sigma) <- 1
-  return(Sigma)
-}
-
 getBETA_linear <- function(p, k, beta_max, kindices, k_signs){
   coef_nonzero <- seq(0, beta_max, length.out=k)
   b <- vector('numeric', p)
@@ -102,11 +70,11 @@ getBETA_linearfixed <- function(p, k, beta_avg, kindices, k_signs){
 }
 
 if (sigmatype == 'exch'){
-  getSigmaFunc <- getSigma_exch
+  getSigmaFunc <- get_exch
 } else if (sigmatype=='ar1'){
-  getSigmaFunc <- getSigma_ar1
+  getSigmaFunc <- get_ar
 } else if (sigmatype == '1band'){
-  getSigmaFunc <- getSigma_1band
+  getSigmaFunc <- function(p, rho) return(get_banded(p, rho, nbands=1))
   max_rho <- min(abs(-1/(2*cos((1:p)*pi/(p+1)))))
   cat("\nbanded SigmaGen: maximum correlation = "); cat(max_rho)
   cat(" to prevent singular SigmaGen\n")
@@ -151,35 +119,33 @@ if (!(betatype %in% c("flatfixed", "linearfixed"))){
    BETA_grid <- sapply(bmseq, function(bmax) return(BETAfunc(p, k, bmax, kindices, k_signs)))
 }
 
-onesimrun <- function(SigmaGen, Xgenfunc, BETA, BETA_smaller, BETA_neq_ix, N, FDR, statfunclist) {
-  statnames <- names(statfunclist)
-  p <- ncol(SigmaGen)
-  X <- Xgenfunc()
-  X <- knockoff:::normc(X, center=F)
-  Sigma <- crossprod(X)
-  Xsvd <- knockoff:::canonical_svd(X)
-  svec_equi <- rep(min(c(2 * min(Xsvd$d^2), 1))  , p)
+onesimrun <- function(SigmaGen, p, BETA, BETA_smaller, BETA_neq_ix, N, FDR, statfunclist) {
+  X <- mvrnorm(N, mu = rep(0, p), Sigma=SigmaGen)
+  X <- scale(X, center = T, scale = F)
+  X <- scale(X, center = F, scale = apply(X, 2, function(xj)
+    return(sqrt(sum(xj ^ 2)))))
+  Xbeta <- X %*% BETA
+  Y <- rnorm(N) + Xbeta
+  xqr <- qr(X)
+  G <- crossprod(X)
+  Ginv <- solve(G)
+  
+  # Compute s vectors
+  svec_equi <- rep(min(c(1, 2 * min(eigen(G, only.values = TRUE, symmetric = TRUE)$values))), p)
   if (p > 100){
-    svec_sdp <- create.solve_asdp(Sigma)
+    svec_sdp <- create.solve_asdp(G)
   } else{
-    svec_sdp <- create.solve_sdp(Sigma)
+    svec_sdp <- create.solve_sdp(G)
   }
-  ldetGfunc <- get_ldetfun(Sigma)
-  ldetGgrad <- get_ldetgrad(Sigma)
-  # Optimize over 0 <= s_j <= 1
-  Gopt <-
-    constrOptim(rep(0.001,p),
-                f = ldetGfunc,
-                grad = ldetGgrad,
-                ui = rbind(diag(p), -diag(p)),
-                ci = c(rep(0,p), rep(-1, p)),
-                control = list(fnscale = -1))
-  Y <- rnorm(N) + X %*% BETA
+  svec_ldet <- get_s_ldet(G)
   sveclist <- setNames(
-    list(svec_equi, svec_sdp, Gopt$par),
+    list(svec_equi, svec_sdp, svec_ldet),
     c('equi', 'sdp', 'Gdet')
   )
-  Xtlist <- lapply(sveclist, function(ss) return(get_knockoffs(ss, X, Xsvd)))
+  Xtlist <- lapply(sveclist, function(ss) return(
+    get_knockoffs_qr(X, ss, xqr = xqr, random = TRUE, tol=1e-07,
+                     Cmat = NULL, Ginv = Ginv, G = G)
+  ))
   Wlist <- 
     lapply(statfunclist, function(stf) return(
       lapply(Xtlist, function(Xk) return(stf(X, Xk, Y)))
@@ -210,15 +176,19 @@ onesimrun <- function(SigmaGen, Xgenfunc, BETA, BETA_smaller, BETA_neq_ix, N, FD
                     fdp = sapply(sel_stat, function(ss) return(fdp(ss))),
                     tpr = sapply(sel_stat, function(ss) return(tpr(ss))),
                     ppv = sapply(sel_stat, function(ss) return(ppv(ss))),
-                    nsel = sapply(sel_stat, length),
-                    lGdet = sapply(sveclist, function(ss) return(ldetGfunc(ss))),
-                    s = do.call('cbind', sveclist)
+                    fpr = sapply(sel_stat, function(ss) return(fpr(ss))),
+                    nsel = sapply(sel_stat, length)
                   )
                 ))
   for(j in seq_along(ret)){
     ret[[j]]$statname <- statnames[j]
     ret[[j]]$prop_badorder <- unlist(prop_badorder[[j]])
   }
+  ret$s_info <- 
+    list(
+      lGdet = sapply(sveclist, function(ss) return(get_ldetfun(G)(ss))),
+      s = do.call('cbind', sveclist)
+    )
   return(ret)
 }
 
@@ -227,9 +197,12 @@ SigmaGenList <- lapply(rhotest, function(rho) return(getSigmaFunc(p, rho)))
 statfunclist <- setNames(list(stat.olsdiff, 
                               stat.ols.ginv,
                               stat.lasso_lambdadiff, 
-                              function(X,X_k,y) return(stat.ridge(X,X_k,y,lambda=lambda_ridge))),
-                         c('ols','ols.ginv','lasso_lambdadiff', 'stat.ridge'))
-simparm <- list(N=N, p=p, nsim=nsim, k=k, kindices, k_signs, r2_betafix,
+                              function(X, X_k, y) return(stat.ridge(X,X_k,y,lambda=lambda_ridge)),
+                              stat.crossprod),
+                         c('ols','ols.ginv','lasso_lambdadiff', 'stat.ridge',
+                           'stat.crossprod'))
+statnames <- names(statfunclist)
+simparm <- list(N=N, p=p, nsim=nsim, k = k, kindices, k_signs, r2_betafix,
                 betatype, sigmatype, myseed=myseed,lambda_ridge,
                 statfunclist, mycores=mycores, FDR=FDR)
 
@@ -237,7 +210,6 @@ simparm <- list(N=N, p=p, nsim=nsim, k=k, kindices, k_signs, r2_betafix,
 ### Run the simulation for each generative Sigma matrix
 for (rj in seq_along(SigmaGenList)){
   SigmaGen <- SigmaGenList[[rj]]
-  
   cat("\nupper 5x5 block of SigmaGen: \n")
   print(SigmaGen[1:5,1:5])
   cat("\n")
@@ -252,11 +224,11 @@ for (rj in seq_along(SigmaGenList)){
   cat("\nBETA = "); cat(paste(round(BETA,3),collapse=', '))
   cat("\nR^2 = "); cat(1 - (1 / (1 + t(BETA) %*% SigmaGen %*% BETA)))
   cat("\n\n")
-  Xgenfunc <- get_Xgenfunc(SigmaGen, N)
   
   fdp <- function(selected) sum(BETA[selected] == 0) / max(1, length(selected))
   ppv <- function(selected) sum(BETA[selected] != 0) / max(1, length(selected))
   tpr <- function(selected) sum(BETA[selected] != 0) / k
+  fpr <- function(selected) sum(BETA[selected] == 0) / (p - k)
   
   BETA_smaller <- outer(BETA,BETA,FUN=function(a,b) return(abs(a) < abs(b)))
   BETA_smaller <- BETA_smaller[lower.tri(BETA_smaller,diag=F)]
@@ -267,15 +239,15 @@ for (rj in seq_along(SigmaGenList)){
   res <-
     mclapply(1:nsim, function(i)
       return(
-        onesimrun(SigmaGen, Xgenfunc, BETA, BETA_smaller, BETA_neq_ix,
+        onesimrun(SigmaGen, p, BETA, BETA_smaller, BETA_neq_ix,
                   N, FDR, statfunclist)
       ))
   save(
-    simparm,BETA,
+    simparm, BETA,
     res,
     SigmaGen,
     file = paste("sim-", sigmatype, "Sigma", "-", betatype, "BETA", "-", 
-                 "-rho",rhotest[rj],"-N",N,"-p",p,
-                 "-nsim",nsim,".RData",sep = '')
+                 "-rho", rhotest[rj], "-N",N,"-p",p,
+                 "-nsim", nsim, ".RData", sep = '')
   )
 }
