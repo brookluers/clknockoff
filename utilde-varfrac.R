@@ -14,10 +14,11 @@ mycores <- as.numeric(args[5])
 sigmatype <- args[6]
 k <- as.numeric(args[7])
 offset <- as.numeric(args[8])
-if (is.na(args[9])){
+ufrac_multiplier <- as.numeric(args[9])
+if (is.na(args[10])){
   rho <- 0.8
 } else {
-  rho <- as.numeric(args[9])
+  rho <- as.numeric(args[10])
 }
 RNGkind("L'Ecuyer-CMRG")
 set.seed(myseed)
@@ -31,7 +32,7 @@ mycores <- max(c(mycores - 1, detectCores() - 1))
 options(cores=mycores)
 registerDoParallel(cores = mycores)
 cat("\n--using "); cat(mycores); cat(" cores\n")
-
+cat("\nMultiply target ||UU^t Y|| fraction by "); cat(ufrac_multiplier) cat("\n")
 if (sigmatype == 'exch'){
   SigmaGen <- get_exch(p, rho)
 } else if (sigmatype=='ar1'){
@@ -69,7 +70,7 @@ simres <-
   foreach(i = 1:nsim, .combine = rbind) %dopar% {
     ret_i <- matrix(nrow = 2, ncol = result_length)
     colnames(ret_i) <- resnames
-    X <- mvrnorm(N, mu = rep(0,p),Sigma=SigmaGen)
+    X <- mvrnorm(N, mu = rep(0, p), Sigma=SigmaGen)
     X <- scale(X, center = T, scale = F)
     X <- scale(X, center = F, scale = apply(X, 2, function(xj)
       return(sqrt(sum(xj ^ 2)))))
@@ -108,9 +109,9 @@ simres <-
     nu2yfrac_tseq <- nu2y_tseq / Ynorm2
     nu3y_tseq <- norm_utheta_projy(tseq, Utilde, Utilde_contain_yperp, Y)
     nu3yfrac_tseq <- nu3y_tseq / Ynorm2
-    minu3frac.ix <- which.min(abs(nu3yfrac_tseq - ufrac))
-    minu2frac.ix <- which.min(abs(nu2yfrac_tseq - ufrac))
-    if (abs(nu3yfrac_tseq[minu3frac.ix] - ufrac) < abs(nu2yfrac_tseq[minu2frac.ix] - ufrac)) {
+    minu3frac.ix <- which.min(abs(nu3yfrac_tseq - ufrac_multiplier * ufrac))
+    minu2frac.ix <- which.min(abs(nu2yfrac_tseq - ufrac_multiplier * ufrac))
+    if (abs(nu3yfrac_tseq[minu3frac.ix] - ufrac_multiplier * ufrac) < abs(nu2yfrac_tseq[minu2frac.ix] - ufrac_multiplier * ufrac)) {
       # Use Utilde_3 definition, = Utilde_contain_yperp
       theta <- tseq[minu3frac.ix]
       Utheta <- sin(theta) * Utilde + cos(theta) * Utilde_contain_yperp
@@ -160,6 +161,7 @@ res_fmt$signal <- magnitude
 res_fmt$sigmatype <- sigmatype
 res_fmt$rho <- rho
 res_fmt$offset <- offset
+res_fmt$ufrac_multiplier <- ufrac_multiplier
 res_fmt$N <- N
 res_fmt$p <- p
 
