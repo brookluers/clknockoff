@@ -62,13 +62,13 @@ magnitude <- 3.5
 BETA[sample(1:p, size = k)] <- magnitude * sample(c(1,-1), size=k, replace=T)
 one_to_p <- 1:p
 selnames <- paste('sel', 1:p, sep='')
-resnames <- c('sim_ix', 'uuynorm', 'uuynormfrac', 'fdp','fpr','ppv','tpr','nsel', selnames)
+resnames <- c('sim_ix', 'uuynorm', 'uuynormfrac', 'ufrac', 
+              'fdp','fpr','ppv','tpr','nsel', selnames)
 result_length <- length(resnames)
 simres <- 
   foreach(i = 1:nsim, .combine = rbind) %dopar% {
     ret_i <- matrix(nrow = 2, ncol = result_length)
     colnames(ret_i) <- resnames
-    rownames(ret_i) <- c("Uavg", "Utilde")
     X <- mvrnorm(N, mu = rep(0,p),Sigma=SigmaGen)
     X <- scale(X, center = T, scale = F)
     X <- scale(X, center = F, scale = apply(X, 2, function(xj)
@@ -111,11 +111,13 @@ simres <-
     minu3frac.ix <- which.min(abs(nu3yfrac_tseq - ufrac))
     minu2frac.ix <- which.min(abs(nu2yfrac_tseq - ufrac))
     if (abs(nu3yfrac_tseq[minu3frac.ix] - ufrac) < abs(nu2yfrac_tseq[minu2frac.ix] - ufrac)) {
+      # Use Utilde_3 definition, = Utilde_contain_yperp
       theta <- tseq[minu3frac.ix]
       Utheta <- sin(theta) * Utilde + cos(theta) * Utilde_contain_yperp
     } else {
+      # Use Utilde_2   = Utilde_yperp
       theta <- tseq[minu2frac.ix]
-      Utheta <- sin(theta) * Utilde + cos(theta) * Utilde_contain_yperp
+      Utheta <- sin(theta) * Utilde + cos(theta) * Utilde_yperp
     }
     
     Xtilde_Utheta <-  X_minus_XGinvS + Utheta %*% Cmat
@@ -129,6 +131,7 @@ simres <-
       rbind(
         c(i, norm(Utheta %*% crossprod(Utheta, Y), 'F')^2,
           NA, # uunormfrac
+          ufrac, 
           fdp(sel_Utheta),
           fpr(sel_Utheta),  ppv(sel_Utheta),
           tpr(sel_Utheta), length(sel_Utheta),
@@ -136,6 +139,7 @@ simres <-
         ),
         c(i, norm(Utilde %*% crossprod(Utilde, Y), 'F')^2,
           NA, # uunormfrac
+          ufrac, 
           fdp(sel_regular),
           fpr(sel_regular),  ppv(sel_regular),
           tpr(sel_regular), length(sel_regular),
@@ -160,7 +164,7 @@ res_fmt$N <- N
 res_fmt$p <- p
 
 
-save(res_fmt, BETA, myseed, file = paste("utilde-fraction-statcordiff-N", N, "-p", p, "-rho", rho,
+save(res_fmt, BETA, myseed, file = paste("utheta-gridsearch-statcordiff-N", N, "-p", p, "-rho", rho,
                                          "-off", offset, '-',sigmatype,
                                          '.RData', 
                                          sep='')
