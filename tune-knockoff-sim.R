@@ -9,7 +9,7 @@ N <- as.numeric(args[1])
 p <- as.numeric(args[2])
 nsim <- as.numeric(args[3])
 myseed <- as.numeric(args[4])
-mycores <- args[5]
+mycores <- as.numeric(args[5])
 sigmatype <- args[6]
 betatype <- args[7]
 k <- as.numeric(args[8])
@@ -27,7 +27,7 @@ cat("\nnsim = "); cat(nsim)
 cat("\nseed = "); cat(myseed)
 cat("\ndesired cores = "); cat(mycores);
 cat("\ndetectCores() = "); cat(detectCores())
-mycores <- max(c(mycores, detectCores() - 1))
+mycores <- max(c(mycores - 1, detectCores() - 1))
 options(cores=mycores)
 options(mc.cores=mycores)
 cat("\n--using "); cat(mycores); cat(" cores\n")
