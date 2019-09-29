@@ -15,11 +15,8 @@ sigmatype <- args[6]
 k <- as.numeric(args[7])
 offset <- as.numeric(args[8])
 ufrac_multiplier <- as.numeric(args[9])
-if (is.na(args[10])){
-  rho <- 0.8
-} else {
-  rho <- as.numeric(args[10])
-}
+rho <- as.numeric(args[10])
+statname <- args[11]
 RNGkind("L'Ecuyer-CMRG")
 set.seed(myseed)
 cat("\nN = "); cat(N)
@@ -32,7 +29,7 @@ mycores <- max(c(mycores - 1, detectCores() - 1))
 options(cores=mycores)
 registerDoParallel(cores = mycores)
 cat("\n--using "); cat(mycores); cat(" cores\n")
-cat("\nMultiply target ||UU^t Y|| fraction by "); cat(ufrac_multiplier) cat("\n")
+cat("\nMultiply target ||UU^t Y|| fraction by "); cat(ufrac_multiplier); cat("\n")
 if (sigmatype == 'exch'){
   SigmaGen <- get_exch(p, rho)
 } else if (sigmatype=='ar1'){
@@ -40,6 +37,19 @@ if (sigmatype == 'exch'){
 } else {
   cat("unknown Sigma structure\nusing exchangeable\n\n")
   SigmaGen <- get_exch(p, rho)
+}
+if (statname == 'cordiff'){
+  cat("\nW statistic: cross product differences")
+  wstatfunc <- stat.crossprod
+} else if (statname == 'lasso-lambda'){
+  wstatfunc <- stat.lasso_lambdadiff
+  cat("\nW statistic: difference in lasso lambda")
+} else if (statname == 'ridge'){
+  wstatfunc <- stat.ridge
+  cat("\nW statistic: ridge regression")
+} else {
+  cat("\nunknown W statistic, using cross products")
+  wstatfunc <- stat.crossprod
 }
 
 norm_utheta_projy <- function(theta, Utilde1, Utilde2, Y){
@@ -123,8 +133,8 @@ simres <-
     
     Xtilde_Utheta <-  X_minus_XGinvS + Utheta %*% Cmat
     Xtilde <- X_minus_XGinvS + Utilde %*% Cmat
-    W_Utheta <- as.numeric(abs_XYcp - abs(crossprod(Xtilde_Utheta, Y))) # simple correlation differences
-    W_regular <- as.numeric(abs_XYcp - abs(crossprod(Xtilde, Y)))
+    W_Utheta <- wstatfunc(X, Xtilde_Utheta, Y)
+    W_regular <- wstatfunc(X, Xtilde, Y)
     sel_Utheta <- which(W_Utheta >= knockoff.threshold(W_Utheta, FDR, offset=offset))
     sel_regular <- which(W_regular >= knockoff.threshold(W_regular, FDR, offset=offset))
     
@@ -166,7 +176,7 @@ res_fmt$N <- N
 res_fmt$p <- p
 
 
-save(res_fmt, BETA, myseed, file = paste("utheta-gridsearch-statcordiff-N", N, "-p", p, "-rho", rho,
+save(res_fmt, BETA, myseed, file = paste("utheta-gridsearch-stat", statname, "-N", N, "-p", p, "-rho", rho,
                                          "-off", offset, '-',sigmatype,
                                          '.RData', 
                                          sep='')
