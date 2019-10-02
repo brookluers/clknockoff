@@ -53,8 +53,6 @@ if (statname == 'cordiff'){
 }
 
 tseq <- seq((6/16)*pi, (10/16)*pi, length.out=200)
-
-
 BETA <- vector('numeric', p)
 fdp <- function(selected) sum(BETA[selected] == 0) / max(1, length(selected))
 ppv <- function(selected) sum(BETA[selected] != 0) / max(1, length(selected))
@@ -68,32 +66,35 @@ selnames <- paste('sel', 1:p, sep='')
 resnames <- c('sim_ix', 'uuynorm', 'uuynormfrac', 'ufrac', 
               'fdp','fpr','ppv','tpr','nsel', selnames)
 result_length <- length(resnames)
+
+# Fix X and Y, only vary Utheta, Utilde
+X <- mvrnorm(N, mu = rep(0, p), Sigma=SigmaGen)
+X <- scale(X, center = T, scale = F)
+X <- scale(X, center = F, scale = apply(X, 2, function(xj)
+  return(sqrt(sum(xj ^ 2)))))
+Xbeta <- X %*% BETA
+xqr <- qr(X)
+Qx <- qr.Q(xqr)
+G <- crossprod(X)
+Ginv <- solve(G)
+svec <- get_s_ldet(G)
+Ginv_S <- sweep(Ginv, 2, svec, FUN=`*`)
+X_minus_XGinvS <- X - X %*% Ginv_S
+Cmat <- get_Cmat_eigen(X, svec, G, Ginv)
+Y <- Xbeta + rnorm(N)
+Ynorm2 <- norm(Y, 'F')^2
+Ylm <- lm(Y ~ 0 + X)
+betahat <- coef(Ylm)
+Yresid <- residuals(Ylm)
+sig2hat <- sum(Yresid^2) / (N - p)
+ufrac <- (sig2hat * p) / ((N - p) * sig2hat + as.numeric(t(betahat) %*% G %*% cbind(betahat)))
+norm_Yresid <- norm(cbind(Yresid), type='F')
+Yresid_normed <- Yresid / norm_Yresid
+
 simres <- 
   foreach(i = 1:nsim, .combine = rbind) %dopar% {
     ret_i <- matrix(nrow = 2, ncol = result_length)
     colnames(ret_i) <- resnames
-    X <- mvrnorm(N, mu = rep(0, p), Sigma=SigmaGen)
-    X <- scale(X, center = T, scale = F)
-    X <- scale(X, center = F, scale = apply(X, 2, function(xj)
-      return(sqrt(sum(xj ^ 2)))))
-    Xbeta <- X %*% BETA
-    xqr <- qr(X)
-    Qx <- qr.Q(xqr)
-    G <- crossprod(X)
-    Ginv <- solve(G)
-    svec <- get_s_ldet(G)
-    Ginv_S <- sweep(Ginv, 2, svec, FUN=`*`)
-    X_minus_XGinvS <- X - X %*% Ginv_S
-    Cmat <- get_Cmat_eigen(X, svec, G, Ginv)
-    Y <- Xbeta + rnorm(N)
-    Ynorm2 <- norm(Y, 'F')^2
-    Ylm <- lm(Y ~ 0 + X)
-    betahat <- coef(Ylm)
-    Yresid <- residuals(Ylm)
-    sig2hat <- sum(Yresid^2) / (N - p)
-    ufrac <- (sig2hat * p) / ((N - p) * sig2hat + as.numeric(t(betahat) %*% G %*% cbind(betahat)))
-    norm_Yresid <- norm(cbind(Yresid), type='F')
-    Yresid_normed <- Yresid / norm_Yresid
     Utilde <- get_Utilde_random(Qx, N, p)
     Utheta <- get_Utheta(Qx, Y, Yresid_normed, N, p, ufrac * ufrac_multiplier)
     Xtilde_Utheta <-  X_minus_XGinvS + Utheta %*% Cmat
@@ -126,7 +127,7 @@ simres <-
     rownames(ret_i) <- c('Utheta', 'Utilde')
     ret_i[,'uuynormfrac'] <- ret_i[,'uuynorm'] / Ynorm2
     ret_i
-}
+  }
 
 res_fmt <- as_tibble(simres, rownames = 'utype')
 res_fmt$pop_Sigma_cnum <- kappa(SigmaGen, exact = TRUE)
@@ -141,7 +142,7 @@ res_fmt$N <- N
 res_fmt$p <- p
 
 
-save(res_fmt, BETA, myseed, file = paste("utheta-gridsearch-stat", statname, "-N", N, "-p", p, "-rho", rho,
+save(res_fmt, BETA, X, Y, myseed, file = paste("utheta-fixXY-stat", statname, "-N", N, "-p", p, "-rho", rho,
                                          "-off", offset, '-',sigmatype,
                                          '.RData', 
                                          sep='')
