@@ -97,7 +97,7 @@ simres <-
     norm_Yresid <- norm(cbind(Yresid), type='F')
     Yresid_normed <- Yresid / norm_Yresid
     Utilde <- get_Utilde_random(Qx, N, p)
-    Utheta <- get_Utheta(Qx, Y, Yresid_normed, N, p, ufrac)
+    Utheta <- get_Utheta(Qx, Y, Yresid_normed, N, p, ufrac * ufrac_multiplier)
     Xtilde_Utheta <-  X_minus_XGinvS + Utheta %*% Cmat
     Xtilde <- X_minus_XGinvS + Utilde %*% Cmat
     W_Utheta <- wstatfunc(X, Xtilde_Utheta, Y)
