@@ -52,14 +52,6 @@ if (statname == 'cordiff'){
   wstatfunc <- stat.crossprod
 }
 
-norm_utheta_projy <- function(theta, Utilde1, Utilde2, Y){
-  ret <- vector('numeric', length(theta))
-  for (i in seq_along(ret)){
-    Utheta <- sin(theta[i]) * Utilde1 + cos(theta[i]) * Utilde2
-    ret[i] <- norm(Utheta %*% crossprod(Utheta, Y), 'F')^2
-  }
-  return(ret)
-}
 tseq <- seq((6/16)*pi, (10/16)*pi, length.out=200)
 
 
@@ -104,33 +96,8 @@ simres <-
     ufrac <- (sig2hat * p) / ((N - p) * sig2hat + as.numeric(t(betahat) %*% G %*% cbind(betahat)))
     norm_Yresid <- norm(cbind(Yresid), type='F')
     Yresid_normed <- Yresid / norm_Yresid
-    Utilde <- matrix(rnorm(N*p), nrow=N, ncol=p)
-    Utilde <- Utilde - Qx %*% crossprod(Qx, Utilde) #(I - QQ^t) Utilde, project away from X
-    Utilde <- qr.Q(qr(Utilde)) # orthogonalize
-    Q_xuy <- qr.Q(qr(cbind(Utilde, Yresid_normed, Qx)))
-    Utilde_yperp <- matrix(rnorm(N*p), nrow=N, ncol=p)
-    Utilde_yperp <- Utilde_yperp - Q_xuy %*% crossprod(Q_xuy, Utilde_yperp) # project away from Yresid, X, Utilde
-    Utilde_yperp <- qr.Q(qr(Utilde_yperp)) # orthogonalize
-    Utilde_contain_yperp <- cbind(Yresid_normed, matrix(rnorm(N*(p-1)), nrow=N, ncol=(p-1)))
-    Q_xu <- qr.Q(qr(cbind(Utilde, Qx)))
-    Utilde_contain_yperp <- Utilde_contain_yperp - Q_xu %*% crossprod(Q_xu, Utilde_contain_yperp)
-    Utilde_contain_yperp <- qr.Q(qr(Utilde_contain_yperp))
-    nu2y_tseq <- norm_utheta_projy(tseq, Utilde, Utilde_yperp, Y)
-    nu2yfrac_tseq <- nu2y_tseq / Ynorm2
-    nu3y_tseq <- norm_utheta_projy(tseq, Utilde, Utilde_contain_yperp, Y)
-    nu3yfrac_tseq <- nu3y_tseq / Ynorm2
-    minu3frac.ix <- which.min(abs(nu3yfrac_tseq - ufrac_multiplier * ufrac))
-    minu2frac.ix <- which.min(abs(nu2yfrac_tseq - ufrac_multiplier * ufrac))
-    if (abs(nu3yfrac_tseq[minu3frac.ix] - ufrac_multiplier * ufrac) < abs(nu2yfrac_tseq[minu2frac.ix] - ufrac_multiplier * ufrac)) {
-      # Use Utilde_3 definition, = Utilde_contain_yperp
-      theta <- tseq[minu3frac.ix]
-      Utheta <- sin(theta) * Utilde + cos(theta) * Utilde_contain_yperp
-    } else {
-      # Use Utilde_2   = Utilde_yperp
-      theta <- tseq[minu2frac.ix]
-      Utheta <- sin(theta) * Utilde + cos(theta) * Utilde_yperp
-    }
-    
+    Utilde <- get_Utilde_random(Qx, N, p)
+    Utheta <- get_Utheta(Qx, Y, Yresid_normed, N, p, ufrac)
     Xtilde_Utheta <-  X_minus_XGinvS + Utheta %*% Cmat
     Xtilde <- X_minus_XGinvS + Utilde %*% Cmat
     W_Utheta <- wstatfunc(X, Xtilde_Utheta, Y)

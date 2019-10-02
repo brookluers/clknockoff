@@ -143,7 +143,7 @@ onesimrun <- function(SigmaGen, p, BETA, BETA_smaller, BETA_neq_ix, N, FDR, stat
     c('equi', 'sdp', 'Gdet')
   )
   Xtlist <- lapply(sveclist, function(ss) return(
-    get_knockoffs_qr(X, ss, xqr = xqr, random = TRUE, tol=1e-07,
+    get_knockoffs_qr(X, ss, xqr = xqr, utilde = 'random', tol=1e-07,
                      Cmat = NULL, Ginv = Ginv, G = G)
   ))
   Wlist <- 

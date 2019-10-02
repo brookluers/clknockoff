@@ -67,11 +67,7 @@ get_ldetgrad <- function(Sigma) {
   ## single-entry matrix (jj) selects the jth column
   # when right multiplied
   f <- function(svec){
-    ret <- vector('numeric', p)
-    W <- 2 * Sigma - diag(svec)
-    Winv <- solve(W)
-    ret <- 1 / svec - diag(Winv)
-    return(ret)
+    return(1 / svec - diag(solve(2 * Sigma - diag(svec))))
   }
   return(f)
 }
@@ -96,6 +92,7 @@ get_s_ldet <- function(Sigma){
   return(Gopt$par)
 }
 
+
 get_Cmat_eigen <- function(X, svec, G = NULL, Ginv = NULL, tol=1e-7){
   if (is.null(G)) {
     G <- crossprod(X)
@@ -111,7 +108,67 @@ get_Cmat_eigen <- function(X, svec, G = NULL, Ginv = NULL, tol=1e-7){
   return(Cmat)
 }
 
-get_knockoffs_qr <- function(X, svec, xqr = NULL, random = TRUE, tol = 1e-7, Cmat=NULL, Ginv = NULL, G= NULL){
+get_Utilde_random <- function(Qx, N, p){
+  Utilde <- matrix(rnorm(N * p), nrow = N, ncol = p)
+  Utilde <- Utilde - Qx %*% crossprod(Qx, Utilde) #(I - QQ^t) Utilde
+  return(qr.Q(qr(Utilde)))
+}
+
+norm_utheta_projy <- function(theta, Utilde1, Utilde2, Y){
+  ret <- vector('numeric', length(theta))
+  for (i in seq_along(ret)){
+    Utheta <- sin(theta[i]) * Utilde1 + cos(theta[i]) * Utilde2
+    ret[i] <- norm(Utheta %*% crossprod(Utheta, Y), 'F')^2
+  }
+  return(ret)
+}
+
+
+get_Utheta <-
+  function(Qx, Y, Yresid_normed,  N, p, target_val, Ynorm2 = NULL, tseq = NULL) {
+    if (is.null(tseq)) {
+      tseq <- seq((1 / 4) * pi, (3 / 4) * pi, length.out = 250)
+    }
+    if (is.null(Ynorm2)){
+      Ynorm2 <-  norm(Y, 'F')^2
+    }
+    Utilde <- get_Utilde_random(Qx, N, p)
+    Q_xuy <- qr.Q(qr(cbind(Utilde, Yresid_normed, Qx)))
+    Utilde_yperp <- matrix(rnorm(N * p), nrow = N, ncol = p)
+    Utilde_yperp <-
+      Utilde_yperp - Q_xuy %*% crossprod(Q_xuy, Utilde_yperp) # project away from Yresid, X, Utilde
+    Utilde_yperp <- qr.Q(qr(Utilde_yperp)) # orthogonalize
+    Utilde_contain_yperp <-
+      cbind(Yresid_normed, matrix(rnorm(N * (p - 1)), nrow = N, ncol = (p - 1)))
+    Q_xu <- qr.Q(qr(cbind(Utilde, Qx)))
+    Utilde_contain_yperp <-
+      Utilde_contain_yperp - Q_xu %*% crossprod(Q_xu, Utilde_contain_yperp)
+    Utilde_contain_yperp <- qr.Q(qr(Utilde_contain_yperp))
+    
+    nu2y_tseq <- norm_utheta_projy(tseq, Utilde, Utilde_yperp, Y)
+    nu2yfrac_tseq <- nu2y_tseq / Ynorm2
+    nu3y_tseq <-
+      norm_utheta_projy(tseq, Utilde, Utilde_contain_yperp, Y)
+    nu3yfrac_tseq <- nu3y_tseq / Ynorm2
+    minu3frac.ix <-
+      which.min(abs(nu3yfrac_tseq - target_val))
+    minu2frac.ix <-
+      which.min(abs(nu2yfrac_tseq - target_val))
+    if (abs(nu3yfrac_tseq[minu3frac.ix] - target_val) < abs(nu2yfrac_tseq[minu2frac.ix] - target_val)) {
+      # Use Utilde_3 definition, = Utilde_contain_yperp
+      theta <- tseq[minu3frac.ix]
+      Utheta <-
+        sin(theta) * Utilde + cos(theta) * Utilde_contain_yperp
+    } else {
+      # Use Utilde_2   = Utilde_yperp
+      theta <- tseq[minu2frac.ix]
+      Utheta <- sin(theta) * Utilde + cos(theta) * Utilde_yperp
+    }
+    return(Utheta)
+  }
+
+get_knockoffs_qr <- function(X, svec, xqr = NULL, utilde = 'random', tol = 1e-7, Cmat=NULL, Ginv = NULL, G= NULL,
+                             ufrac_target = NULL, Y = NULL){
   N <- nrow(X)
   p <- ncol(X)
   if (is.null(G)){
@@ -121,18 +178,21 @@ get_knockoffs_qr <- function(X, svec, xqr = NULL, random = TRUE, tol = 1e-7, Cma
     Cmat <- get_Cmat_eigen(X, svec, G, tol=tol)
   }
   if (is.null(Ginv)){
-    Ginv <- solve(crossprod(X))
+    Ginv <- solve(G)
+  }
+  if (is.null(xqr)){
+    xqr <- qr(X)
   }
   Ginv_S <- sweep(Ginv, 2, svec, FUN=`*`)
-  if (random){
-    if (is.null(xqr)){
-      Q <- qr.Q(qr(X))
-    } else {
-      Q <- qr.Q(xqr)
-    }
-    Utilde <- matrix(rnorm(N*p), nrow=N, ncol=p)
-    Utilde <- Utilde - Q %*% crossprod(Q, Utilde) #(I - QQ^t) Utilde
-    Utilde <- qr.Q(qr(Utilde))
+  if (utilde == 'random'){
+    Qx <- qr.Q(xqr)
+    Utilde <- get_Utilde_random(Qx, N, p)
+  } else if (utilde=='utheta') {
+    Yresid <- residuals(lm(Y ~ 0 + X))
+    norm_Yresid <- norm(cbind(Yresid), type='F')
+    Yresid_normed <- Yresid / norm_Yresid
+    Qx <- qr.Q(xqr)
+    Utilde <- get_Utheta(Qx, Y, Yresid_normed,N,p,ufrac_target,Ynorm2 = norm(Y,'F')^2)
   } else{
     Q <- qr.Q(qr(cbind(X, matrix(0, nrow=N, ncol=p))))
     Utilde <- Q[,(p+1):(2*p)]
